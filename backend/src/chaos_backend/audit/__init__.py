@@ -8,6 +8,8 @@ concern; for now each side writes and verifies its own logs with the
 same internal contract.
 """
 
+from chaos_backend.audit.html_viewer import render as render_html
+from chaos_backend.audit.html_viewer import render_from_path as render_html_from_path
 from chaos_backend.audit.log import (
     AuditLogEntry,
     AuditLogReader,
@@ -22,4 +24,6 @@ __all__ = [
     "AuditLogVerifier",
     "AuditLogWriter",
     "VerificationResult",
+    "render_html",
+    "render_html_from_path",
 ]

@@ -21,7 +21,12 @@ from typing import Any
 
 import numpy as np
 
-from chaos_backend.audit import AuditLogReader, AuditLogVerifier, AuditLogWriter
+from chaos_backend.audit import (
+    AuditLogReader,
+    AuditLogVerifier,
+    AuditLogWriter,
+    render_html_from_path,
+)
 from chaos_backend.services.adversary_model import AdversaryModelService
 from chaos_backend.services.coa_generator import CourseOfActionService
 from chaos_backend.services.discrimination import DiscriminationService
@@ -321,6 +326,23 @@ def cmd_audit_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit_html(args: argparse.Namespace) -> int:
+    rendered = render_html_from_path(args.input)
+    from pathlib import Path
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(rendered, encoding="utf-8")
+    _emit(
+        {
+            "input": str(args.input),
+            "output": str(output_path),
+            "bytes": len(rendered),
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chaos-backend-cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -343,6 +365,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     audit_demo.add_argument("path")
     audit_demo.set_defaults(func=cmd_audit_demo)
+
+    audit_html = audit_sub.add_parser(
+        "html",
+        help="render an audit log to a self-contained HTML page",
+    )
+    audit_html.add_argument("input")
+    audit_html.add_argument("output")
+    audit_html.set_defaults(func=cmd_audit_html)
 
     d = sub.add_parser(
         "demo",
