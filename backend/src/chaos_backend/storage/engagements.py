@@ -138,7 +138,7 @@ class EngagementRepository:
     def recent(self, limit: int = 20) -> list[EngagementRecord]:
         with self._connect() as conn:
             cursor = conn.execute(
-                "SELECT * FROM engagements ORDER BY started_at DESC LIMIT ?",
+                "SELECT * FROM engagements ORDER BY started_at DESC, rowid DESC LIMIT ?",
                 (max(0, int(limit)),),
             )
             return [_row_to_record(row) for row in cursor.fetchall()]

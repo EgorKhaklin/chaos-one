@@ -215,3 +215,34 @@ def test_landing_no_diff_link_when_scenario_appears_only_once(
 
     body = isolated_client.get("/").text
     assert 'class="muted"' in body
+
+
+def test_engagement_rerun_creates_a_second_record(isolated_client: TestClient) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "7"})
+    original = isolated_client.get("/engagements").json()["engagements"][0]
+
+    response = isolated_client.post(f"/engagements/{original['id']}/rerun")
+    assert response.status_code == 200
+    assert "AUDIT REEL" in response.text
+
+    listing = isolated_client.get("/engagements").json()
+    assert listing["count"] == 2
+    # newest record matches the rerun (same scenario + seed, different id)
+    newest = listing["engagements"][0]
+    assert newest["scenario"] == original["scenario"]
+    assert newest["seed"] == original["seed"]
+    assert newest["id"] != original["id"]
+
+
+def test_engagement_rerun_404_when_missing(isolated_client: TestClient) -> None:
+    response = isolated_client.post("/engagements/eng_nope/rerun")
+    assert response.status_code == 404
+
+
+def test_landing_includes_rerun_buttons(isolated_client: TestClient) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "1"})
+    record = isolated_client.get("/engagements").json()["engagements"][0]
+
+    body = isolated_client.get("/").text
+    assert f'action="/engagements/{record["id"]}/rerun"' in body
+    assert ">rerun</button>" in body

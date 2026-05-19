@@ -164,6 +164,18 @@ _LANDING_HTML = """<!doctype html>
             letter-spacing: 1px;
         }
         .muted { color: rgba(232, 226, 208, 0.30); }
+        .row-form { display: inline; margin: 0; padding: 0; background: none; border: none; max-width: none; }
+        .row-button {
+            background: rgba(201, 169, 97, 0.12);
+            color: rgba(232, 226, 208, 0.92);
+            border: 1px solid rgba(201, 169, 97, 0.45);
+            padding: 4px 10px;
+            font-size: 9px;
+            letter-spacing: 2px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .row-button:hover { background: rgba(201, 169, 97, 0.25); }
 
         .meta {
             margin-top: 36px;
@@ -416,6 +428,13 @@ def build_app(
             raise HTTPException(status_code=410, detail="log file no longer on disk")
         return HTMLResponse(content=render_html_from_path(record.log_path))
 
+    @application.post("/engagements/{engagement_id}/rerun", response_class=HTMLResponse)
+    def engagement_rerun(engagement_id: str) -> HTMLResponse:
+        record = repo.get(engagement_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="engagement not found")
+        return play(scenario=record.scenario, seed=record.seed)
+
     @application.get("/engagements/{a_id}/diff/{b_id}", response_class=HTMLResponse)
     def engagement_diff(a_id: str, b_id: str) -> HTMLResponse:
         record_a = repo.get(a_id)
@@ -475,6 +494,13 @@ def _render_recent_engagements(repo: EngagementRepository) -> str:
             diff_cell = f'<a href="/engagements/{r.id}/diff/{prev}">diff prev</a>'
         else:
             diff_cell = '<span class="muted">—</span>'
+
+        rerun_cell = (
+            f'<form action="/engagements/{r.id}/rerun" method="post" class="row-form">'
+            '<button type="submit" class="row-button">rerun</button>'
+            "</form>"
+        )
+
         rows.append(
             f"""<tr>
                 <td class="seq"><a href="/engagements/{r.id}/audit.html">{r.id}</a></td>
@@ -484,6 +510,7 @@ def _render_recent_engagements(repo: EngagementRepository) -> str:
                 <td class="t">{"OK" if r.verified else "BROKEN"}</td>
                 <td class="t">{r.started_at}</td>
                 <td class="t">{diff_cell}</td>
+                <td class="t">{rerun_cell}</td>
             </tr>"""
         )
 
@@ -500,6 +527,7 @@ def _render_recent_engagements(repo: EngagementRepository) -> str:
                 <th>CHAIN</th>
                 <th>STARTED (UTC)</th>
                 <th>DIFF</th>
+                <th>RERUN</th>
             </tr>
         </thead>
         <tbody>
