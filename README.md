@@ -1,10 +1,16 @@
-# Chaos One
+<p align="center">
+  <img src="assets/Chaos.jpg" alt="Chaos One" width="280" />
+</p>
 
-[![backend](https://github.com/EgorKhaklin/chaos-one/actions/workflows/backend.yml/badge.svg?branch=main)](https://github.com/EgorKhaklin/chaos-one/actions/workflows/backend.yml)
-[![codeql](https://github.com/EgorKhaklin/chaos-one/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/EgorKhaklin/chaos-one/actions/workflows/codeql.yml)
-[![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-3776AB?logo=python&logoColor=white)](https://github.com/EgorKhaklin/chaos-one/blob/main/backend/pyproject.toml)
-[![unity](https://img.shields.io/badge/unity-6%20LTS%20HDRP-000?logo=unity&logoColor=white)](https://github.com/EgorKhaklin/chaos-one/blob/main/unity/Packages/manifest.json)
-[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+<h1 align="center">Chaos One</h1>
+
+<p align="center">
+  <a href="https://github.com/EgorKhaklin/chaos-one/actions/workflows/backend.yml"><img src="https://github.com/EgorKhaklin/chaos-one/actions/workflows/backend.yml/badge.svg?branch=main" alt="backend" /></a>
+  <a href="https://github.com/EgorKhaklin/chaos-one/actions/workflows/codeql.yml"><img src="https://github.com/EgorKhaklin/chaos-one/actions/workflows/codeql.yml/badge.svg?branch=main" alt="codeql" /></a>
+  <a href="https://github.com/EgorKhaklin/chaos-one/blob/main/backend/pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12-3776AB?logo=python&logoColor=white" alt="python" /></a>
+  <a href="https://github.com/EgorKhaklin/chaos-one/blob/main/unity/Packages/manifest.json"><img src="https://img.shields.io/badge/unity-6%20LTS%20HDRP-000?logo=unity&logoColor=white" alt="unity" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="license" /></a>
+</p>
 
 Conceptual decision-support interface for next-generation air and missile
 defense. Unity 6 HDRP front end, Python gRPC backend. Apache 2.0.
