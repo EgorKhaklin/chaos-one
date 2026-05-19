@@ -1,0 +1,7 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <ui:VisualElement name="calm-channel" class="calm-channel">
+        <ui:Label text="LOG" class="calm-channel__label" />
+        <ui:VisualElement class="calm-channel__separator" />
+        <ui:VisualElement name="calm-channel-list" class="calm-channel__list" />
+    </ui:VisualElement>
+</ui:UXML>

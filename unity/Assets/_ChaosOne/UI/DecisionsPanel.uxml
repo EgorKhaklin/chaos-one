@@ -1,0 +1,14 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <ui:VisualElement name="decisions-panel" class="decisions-panel">
+        <ui:VisualElement class="decisions-panel__header">
+            <ui:Label text="DECISIONS" class="decisions-panel__title" />
+            <ui:VisualElement class="decisions-panel__rule" />
+        </ui:VisualElement>
+
+        <ui:VisualElement name="card-stack" class="decisions-panel__stack" />
+
+        <ui:VisualElement class="decisions-panel__footer">
+            <ui:Label text="ENTER AUTHORIZE · O OBJECT · E EXPLAIN" class="decisions-panel__hint" />
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>

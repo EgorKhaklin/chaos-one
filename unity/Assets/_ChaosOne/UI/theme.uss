@@ -106,3 +106,595 @@
     font-size: 9px;
     letter-spacing: 1px;
 }
+
+/* ──────────────────────────────────────────────────────────────────
+   Mode HUD — top strip, monospace, mode-aware accent tint
+   ────────────────────────────────────────────────────────────────── */
+
+.mode-hud {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 32px;
+    flex-direction: row;
+    align-items: center;
+    padding-left: 16px;
+    padding-right: 16px;
+    background-color: rgba(10, 22, 40, 0.92);
+    border-bottom-color: rgba(201, 169, 97, 0.45);
+    border-bottom-width: 1px;
+}
+
+.mode-hud--amber {
+    border-bottom-color: rgba(220, 160, 60, 0.80);
+}
+
+.mode-hud--red {
+    border-bottom-color: rgba(220, 80, 80, 0.90);
+}
+
+.mode-hud__cell {
+    flex-direction: row;
+    align-items: center;
+    margin-right: 14px;
+}
+
+.mode-hud__cell--letter {
+    width: 28px;
+    justify-content: center;
+}
+
+.mode-hud__cell--magazine {
+    flex-grow: 1;
+    justify-content: flex-end;
+}
+
+.mode-hud__separator {
+    width: 1px;
+    height: 14px;
+    margin-right: 14px;
+    background-color: rgba(201, 169, 97, 0.30);
+}
+
+.mode-hud__letter {
+    color: rgb(201, 169, 97);
+    font-size: 16px;
+    -unity-font-style: bold;
+}
+
+.mode-hud--amber .mode-hud__letter {
+    color: rgb(220, 160, 60);
+}
+
+.mode-hud--red .mode-hud__letter {
+    color: rgb(220, 80, 80);
+}
+
+.mode-hud__name {
+    color: rgb(232, 226, 208);
+    font-size: 11px;
+    -unity-font-style: bold;
+    letter-spacing: 3px;
+}
+
+.mode-hud__metric {
+    color: rgba(232, 226, 208, 0.78);
+    font-size: 10px;
+    letter-spacing: 1px;
+    -unity-font-style: bold;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Decisions Panel — right-anchored COA stack
+   ────────────────────────────────────────────────────────────────── */
+
+.decisions-panel {
+    position: absolute;
+    right: 24px;
+    top: 64px;
+    width: 360px;
+    flex-direction: column;
+    padding: 14px;
+    background-color: rgba(10, 22, 40, 0.78);
+    border-left-color: rgba(201, 169, 97, 0.60);
+    border-left-width: 2px;
+    border-top-color: rgba(201, 169, 97, 0.28);
+    border-top-width: 1px;
+    border-right-color: rgba(201, 169, 97, 0.28);
+    border-right-width: 1px;
+    border-bottom-color: rgba(201, 169, 97, 0.28);
+    border-bottom-width: 1px;
+}
+
+.decisions-panel__header {
+    flex-direction: column;
+    margin-bottom: 10px;
+}
+
+.decisions-panel__title {
+    color: rgb(201, 169, 97);
+    font-size: 12px;
+    -unity-font-style: bold;
+    letter-spacing: 5px;
+    margin-bottom: 6px;
+}
+
+.decisions-panel__rule {
+    height: 1px;
+    background-color: rgba(201, 169, 97, 0.35);
+}
+
+.decisions-panel__stack {
+    flex-direction: column;
+}
+
+.decisions-panel__footer {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top-color: rgba(201, 169, 97, 0.18);
+    border-top-width: 1px;
+}
+
+.decisions-panel__hint {
+    color: rgba(232, 226, 208, 0.40);
+    font-size: 9px;
+    letter-spacing: 1px;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   COA card — one per active course of action
+   ────────────────────────────────────────────────────────────────── */
+
+.coa-card {
+    flex-direction: column;
+    padding: 12px;
+    margin-bottom: 10px;
+    background-color: rgba(16, 28, 48, 0.92);
+    border-left-color: rgba(201, 169, 97, 0.45);
+    border-left-width: 2px;
+    border-top-color: rgba(232, 226, 208, 0.08);
+    border-top-width: 1px;
+    border-right-color: rgba(232, 226, 208, 0.08);
+    border-right-width: 1px;
+    border-bottom-color: rgba(232, 226, 208, 0.08);
+    border-bottom-width: 1px;
+}
+
+.coa-card--recommended {
+    border-left-color: rgb(201, 169, 97);
+    background-color: rgba(22, 34, 56, 0.95);
+}
+
+.coa-card--countdown-low .coa-card__countdown-fill {
+    background-color: rgb(220, 160, 60);
+}
+
+.coa-card__top {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.coa-card__id {
+    color: rgba(232, 226, 208, 0.65);
+    font-size: 10px;
+    -unity-font-style: bold;
+    letter-spacing: 3px;
+}
+
+.coa-card__badge {
+    color: rgb(10, 22, 40);
+    background-color: rgb(201, 169, 97);
+    font-size: 9px;
+    -unity-font-style: bold;
+    letter-spacing: 2px;
+    padding-left: 6px;
+    padding-right: 6px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    border-top-left-radius: 1px;
+    border-top-right-radius: 1px;
+    border-bottom-left-radius: 1px;
+    border-bottom-right-radius: 1px;
+}
+
+.coa-card__headline {
+    color: rgb(232, 226, 208);
+    font-size: 13px;
+    -unity-font-style: bold;
+    margin-bottom: 4px;
+    white-space: normal;
+}
+
+.coa-card__why {
+    color: rgba(232, 226, 208, 0.72);
+    font-size: 10px;
+    margin-bottom: 10px;
+    white-space: normal;
+}
+
+.coa-card__metrics {
+    flex-direction: column;
+    margin-bottom: 10px;
+}
+
+.coa-card__metric {
+    color: rgba(232, 226, 208, 0.78);
+    font-size: 9px;
+    letter-spacing: 1px;
+    -unity-font-style: bold;
+    margin-bottom: 2px;
+}
+
+.coa-card__countdown {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.coa-card__countdown-track {
+    flex-grow: 1;
+    height: 3px;
+    margin-right: 8px;
+    background-color: rgba(232, 226, 208, 0.10);
+}
+
+.coa-card__countdown-fill {
+    height: 100%;
+    width: 100%;
+    background-color: rgb(201, 169, 97);
+}
+
+.coa-card__countdown-label {
+    color: rgba(232, 226, 208, 0.80);
+    font-size: 10px;
+    -unity-font-style: bold;
+    width: 32px;
+    -unity-text-align: middle-right;
+}
+
+.coa-card__actions {
+    flex-direction: row;
+}
+
+.coa-card__button {
+    flex-grow: 1;
+    margin-right: 6px;
+    height: 28px;
+    border-top-left-radius: 1px;
+    border-top-right-radius: 1px;
+    border-bottom-left-radius: 1px;
+    border-bottom-right-radius: 1px;
+    -unity-font-style: bold;
+    font-size: 10px;
+    letter-spacing: 2px;
+}
+
+.coa-card__button--primary {
+    color: rgb(10, 22, 40);
+    background-color: rgb(201, 169, 97);
+    border-top-color: rgb(201, 169, 97);
+    border-bottom-color: rgb(201, 169, 97);
+    border-left-color: rgb(201, 169, 97);
+    border-right-color: rgb(201, 169, 97);
+}
+
+.coa-card__button--primary:hover {
+    background-color: rgb(220, 188, 116);
+    border-top-color: rgb(220, 188, 116);
+    border-bottom-color: rgb(220, 188, 116);
+    border-left-color: rgb(220, 188, 116);
+    border-right-color: rgb(220, 188, 116);
+}
+
+.coa-card__button--secondary {
+    color: rgba(232, 226, 208, 0.78);
+    background-color: rgba(232, 226, 208, 0.04);
+    border-top-color: rgba(232, 226, 208, 0.18);
+    border-bottom-color: rgba(232, 226, 208, 0.18);
+    border-left-color: rgba(232, 226, 208, 0.18);
+    border-right-color: rgba(232, 226, 208, 0.18);
+}
+
+.coa-card__button--secondary:hover {
+    background-color: rgba(232, 226, 208, 0.10);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Adversary Mirror — playbook hypotheses + cost-imposition sparkline
+   ────────────────────────────────────────────────────────────────── */
+
+.adversary-mirror {
+    position: absolute;
+    right: 24px;
+    bottom: 80px;
+    width: 360px;
+    padding: 14px;
+    background-color: rgba(10, 22, 40, 0.82);
+    border-left-color: rgba(201, 169, 97, 0.55);
+    border-left-width: 2px;
+    border-top-color: rgba(201, 169, 97, 0.24);
+    border-top-width: 1px;
+    border-right-color: rgba(201, 169, 97, 0.24);
+    border-right-width: 1px;
+    border-bottom-color: rgba(201, 169, 97, 0.24);
+    border-bottom-width: 1px;
+}
+
+.adversary-mirror__header {
+    flex-direction: column;
+    margin-bottom: 10px;
+}
+
+.adversary-mirror__title {
+    color: rgb(201, 169, 97);
+    font-size: 11px;
+    -unity-font-style: bold;
+    letter-spacing: 4px;
+    margin-bottom: 6px;
+}
+
+.adversary-mirror__rule {
+    height: 1px;
+    background-color: rgba(201, 169, 97, 0.32);
+}
+
+.adversary-mirror__stack {
+    flex-direction: column;
+    margin-bottom: 12px;
+}
+
+.hypothesis-row {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.hypothesis-row__weight {
+    width: 40px;
+    color: rgb(232, 226, 208);
+    font-size: 12px;
+    -unity-font-style: bold;
+    -unity-text-align: middle-left;
+}
+
+.hypothesis-row__name {
+    flex-grow: 1;
+    margin-left: 6px;
+    color: rgba(232, 226, 208, 0.82);
+    font-size: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hypothesis-row__delta {
+    width: 18px;
+    color: rgba(201, 169, 97, 0.85);
+    font-size: 12px;
+    -unity-text-align: middle-center;
+}
+
+.hypothesis-row__bar {
+    width: 60px;
+    margin-left: 6px;
+    height: 4px;
+    background-color: rgba(232, 226, 208, 0.10);
+}
+
+.hypothesis-row__bar-fill {
+    height: 100%;
+    width: 0%;
+    background-color: rgb(201, 169, 97);
+}
+
+.adversary-mirror__cost {
+    flex-direction: column;
+    padding-top: 8px;
+    border-top-color: rgba(201, 169, 97, 0.20);
+    border-top-width: 1px;
+}
+
+.adversary-mirror__cost-label {
+    color: rgba(232, 226, 208, 0.78);
+    font-size: 9px;
+    letter-spacing: 2px;
+    -unity-font-style: bold;
+    margin-bottom: 6px;
+}
+
+.adversary-mirror__sparkline {
+    flex-direction: row;
+    align-items: flex-end;
+    height: 28px;
+}
+
+.sparkline__bar {
+    flex-grow: 1;
+    margin-right: 2px;
+    background-color: rgba(201, 169, 97, 0.65);
+    min-width: 2px;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Calm Channel — bottom strip event ticker
+   ────────────────────────────────────────────────────────────────── */
+
+.calm-channel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 28px;
+    flex-direction: row;
+    align-items: center;
+    padding-left: 16px;
+    padding-right: 16px;
+    background-color: rgba(10, 22, 40, 0.88);
+    border-top-color: rgba(201, 169, 97, 0.30);
+    border-top-width: 1px;
+}
+
+.calm-channel__label {
+    color: rgb(201, 169, 97);
+    font-size: 9px;
+    -unity-font-style: bold;
+    letter-spacing: 3px;
+    margin-right: 12px;
+}
+
+.calm-channel__separator {
+    width: 1px;
+    height: 12px;
+    background-color: rgba(201, 169, 97, 0.30);
+    margin-right: 12px;
+}
+
+.calm-channel__list {
+    flex-direction: row;
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.calm-channel__entry {
+    color: rgba(232, 226, 208, 0.62);
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    margin-right: 24px;
+    white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Audit Reel — post-engagement replay surface
+   ────────────────────────────────────────────────────────────────── */
+
+.audit-reel {
+    position: absolute;
+    left: 24px;
+    top: 64px;
+    right: 24px;
+    bottom: 64px;
+    flex-direction: column;
+    padding: 18px;
+    background-color: rgba(10, 22, 40, 0.92);
+    border-left-color: rgba(201, 169, 97, 0.50);
+    border-left-width: 2px;
+    border-top-color: rgba(201, 169, 97, 0.24);
+    border-top-width: 1px;
+    border-right-color: rgba(201, 169, 97, 0.24);
+    border-right-width: 1px;
+    border-bottom-color: rgba(201, 169, 97, 0.24);
+    border-bottom-width: 1px;
+}
+
+.audit-reel__header {
+    flex-direction: column;
+    margin-bottom: 12px;
+}
+
+.audit-reel__title {
+    color: rgb(201, 169, 97);
+    font-size: 13px;
+    -unity-font-style: bold;
+    letter-spacing: 5px;
+    margin-bottom: 6px;
+}
+
+.audit-reel__rule {
+    height: 1px;
+    background-color: rgba(201, 169, 97, 0.35);
+}
+
+.audit-reel__path-row {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.audit-reel__path {
+    flex-grow: 1;
+    margin-right: 8px;
+    color: rgb(232, 226, 208);
+}
+
+.audit-reel__load {
+    width: 100px;
+    height: 26px;
+    color: rgb(10, 22, 40);
+    background-color: rgb(201, 169, 97);
+    -unity-font-style: bold;
+    font-size: 10px;
+    letter-spacing: 2px;
+}
+
+.audit-reel__load:hover {
+    background-color: rgb(220, 188, 116);
+}
+
+.audit-reel__path-current {
+    color: rgba(232, 226, 208, 0.55);
+    font-size: 10px;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.audit-reel__status {
+    color: rgba(232, 226, 208, 0.78);
+    font-size: 11px;
+    -unity-font-style: bold;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+}
+
+.audit-status--ok {
+    color: rgb(150, 220, 160);
+}
+
+.audit-status--broken {
+    color: rgb(220, 80, 80);
+}
+
+.audit-reel__entries {
+    flex-grow: 1;
+    background-color: rgba(16, 28, 48, 0.55);
+    padding: 6px;
+}
+
+.audit-row {
+    flex-direction: row;
+    align-items: center;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    padding-left: 4px;
+    padding-right: 4px;
+}
+
+.audit-row__seq {
+    width: 60px;
+    color: rgba(232, 226, 208, 0.50);
+    font-size: 10px;
+}
+
+.audit-row__time {
+    width: 220px;
+    color: rgba(232, 226, 208, 0.78);
+    font-size: 10px;
+}
+
+.audit-row__type {
+    width: 200px;
+    color: rgb(201, 169, 97);
+    font-size: 10px;
+    -unity-font-style: bold;
+    letter-spacing: 1px;
+}
+
+.audit-row__payload {
+    flex-grow: 1;
+    color: rgba(232, 226, 208, 0.72);
+    font-size: 10px;
+}

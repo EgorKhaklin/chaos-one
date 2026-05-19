@@ -1,0 +1,30 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <ui:VisualElement class="coa-card">
+        <ui:VisualElement class="coa-card__top">
+            <ui:Label name="coa-id" text="COA-?" class="coa-card__id" />
+            <ui:Label name="recommended-badge" text="RECOMMENDED" class="coa-card__badge" />
+        </ui:VisualElement>
+
+        <ui:Label name="coa-headline" text="Headline" class="coa-card__headline" />
+        <ui:Label name="coa-why" text="why" class="coa-card__why" />
+
+        <ui:VisualElement class="coa-card__metrics">
+            <ui:Label name="coa-leakage" text="LEAKAGE --" class="coa-card__metric" />
+            <ui:Label name="coa-cost" text="COST --" class="coa-card__metric" />
+            <ui:Label name="coa-escalation" text="ESCALATION --" class="coa-card__metric" />
+            <ui:Label name="coa-releasability" text="REL --" class="coa-card__metric" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="coa-card__countdown">
+            <ui:VisualElement class="coa-card__countdown-track">
+                <ui:VisualElement name="countdown-fill" class="coa-card__countdown-fill" />
+            </ui:VisualElement>
+            <ui:Label name="countdown-label" text="--s" class="coa-card__countdown-label" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="coa-card__actions">
+            <ui:Button name="btn-authorize" text="AUTHORIZE" class="coa-card__button coa-card__button--primary" />
+            <ui:Button name="btn-object" text="OBJECT" class="coa-card__button coa-card__button--secondary" />
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>

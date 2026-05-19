@@ -1,0 +1,35 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <ui:VisualElement name="mode-hud" class="mode-hud">
+        <ui:VisualElement class="mode-hud__cell mode-hud__cell--letter">
+            <ui:Label name="mode-letter" text="A" class="mode-hud__letter" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="mode-hud__cell">
+            <ui:Label name="mode-name" text="NOMINAL" class="mode-hud__name" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="mode-hud__separator" />
+
+        <ui:VisualElement class="mode-hud__cell">
+            <ui:Label name="roe" text="ROE-2" class="mode-hud__metric" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="mode-hud__separator" />
+
+        <ui:VisualElement class="mode-hud__cell">
+            <ui:Label name="comms" text="COMMS 98%" class="mode-hud__metric" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="mode-hud__separator" />
+
+        <ui:VisualElement class="mode-hud__cell">
+            <ui:Label name="crypto" text="PQC-HYBRID" class="mode-hud__metric" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="mode-hud__separator" />
+
+        <ui:VisualElement class="mode-hud__cell mode-hud__cell--magazine">
+            <ui:Label name="magazine" text="MAG 22 NGI / 48 SM-3 / 320 PAC-3 / HEL 1.2MJ" class="mode-hud__metric" />
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>

@@ -1,0 +1,18 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <ui:VisualElement name="audit-reel" class="audit-reel">
+        <ui:VisualElement class="audit-reel__header">
+            <ui:Label text="AUDIT REEL" class="audit-reel__title" />
+            <ui:VisualElement class="audit-reel__rule" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="audit-reel__path-row">
+            <ui:TextField name="path-input" label="LOG PATH" class="audit-reel__path" />
+            <ui:Button name="btn-load" text="LOAD" class="audit-reel__load" />
+        </ui:VisualElement>
+
+        <ui:Label name="path" text="--" class="audit-reel__path-current" />
+        <ui:Label name="status" text="not loaded" class="audit-reel__status" />
+
+        <ui:ScrollView name="entry-list" class="audit-reel__entries" />
+    </ui:VisualElement>
+</ui:UXML>
