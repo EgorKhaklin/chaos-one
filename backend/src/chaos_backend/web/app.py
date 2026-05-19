@@ -37,6 +37,7 @@ from chaos_backend.audit import (
     render_diff_html,
     render_html_from_path,
 )
+from chaos_backend.observability import RequestLoggingMiddleware, configure_logging
 from chaos_backend.simulation.scenario_runner import run as run_scenario
 from chaos_backend.simulation.scenario_runner import stream_scenario
 from chaos_backend.simulation.scenarios import ScenarioKind, build
@@ -321,13 +322,19 @@ def build_app(
     *,
     repository: EngagementRepository | None = None,
     log_directory: Path | None = None,
+    configure_observability: bool = True,
 ) -> FastAPI:
+    if configure_observability:
+        configure_logging(level=os.environ.get("CHAOS_LOG_LEVEL", "INFO"))
+
     application = FastAPI(
         title="Chaos One Dashboard",
         version=__version__,
         docs_url="/docs",
         redoc_url=None,
     )
+
+    application.add_middleware(RequestLoggingMiddleware)
 
     repo = repository or EngagementRepository(
         database_path=Path(os.environ.get("CHAOS_DB_PATH") or default_database_path())
