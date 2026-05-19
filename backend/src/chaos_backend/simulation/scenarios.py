@@ -113,9 +113,7 @@ def build_regional_crisis(seed: int) -> Scenario:
         ScenarioEvent(20.0, "discrimination_resolved", {"cm": 8, "uas_candidates": 150}),
         ScenarioEvent(180.0, "scenario_end"),
     ]
-    return Scenario(
-        kind=ScenarioKind.REGIONAL_CRISIS, seed=seed, duration_s=180.0, events=events
-    )
+    return Scenario(kind=ScenarioKind.REGIONAL_CRISIS, seed=seed, duration_s=180.0, events=events)
 
 
 def build_ambiguous_launch(seed: int) -> Scenario:
@@ -140,9 +138,7 @@ def build_ambiguous_launch(seed: int) -> Scenario:
         ),
         ScenarioEvent(480.0, "scenario_end"),
     ]
-    return Scenario(
-        kind=ScenarioKind.AMBIGUOUS_LAUNCH, seed=seed, duration_s=480.0, events=events
-    )
+    return Scenario(kind=ScenarioKind.AMBIGUOUS_LAUNCH, seed=seed, duration_s=480.0, events=events)
 
 
 _BUILDERS = {

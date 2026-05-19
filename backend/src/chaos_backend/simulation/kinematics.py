@@ -25,7 +25,7 @@ class ThreatState:
     drag_area_m2: float = 0.2
     drag_coefficient: float = 0.3
 
-    def copy(self) -> "ThreatState":
+    def copy(self) -> ThreatState:
         return ThreatState(
             position_m=self.position_m.copy(),
             velocity_mps=self.velocity_mps.copy(),
@@ -59,7 +59,8 @@ def _acceleration(state: ThreatState) -> np.ndarray:
         drag_accel = np.zeros(3)
 
     gravity_accel = np.array([0.0, -_gravity(altitude), 0.0])
-    return drag_accel + gravity_accel
+    result: np.ndarray = drag_accel + gravity_accel
+    return result
 
 
 def step_rk4(state: ThreatState, dt_seconds: float) -> ThreatState:

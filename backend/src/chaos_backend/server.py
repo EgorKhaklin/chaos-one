@@ -20,7 +20,7 @@ import asyncio
 import logging
 import signal
 
-import grpc
+import grpc  # type: ignore[import-untyped]
 import structlog
 
 from chaos_backend.services.adversary_model import AdversaryModelService
@@ -39,7 +39,9 @@ async def serve(host: str, port: int, *, with_stubs: bool) -> None:
 
     if with_stubs:
         try:
-            from chaos_backend.generated import chaos_one_pb2_grpc  # type: ignore[import-not-found]
+            from chaos_backend.generated import (  # type: ignore[attr-defined]
+                chaos_one_pb2_grpc,
+            )
 
             chaos_one_pb2_grpc.add_DiscriminationServicer_to_server(discrimination, server)
             chaos_one_pb2_grpc.add_CourseOfActionServicer_to_server(coa, server)

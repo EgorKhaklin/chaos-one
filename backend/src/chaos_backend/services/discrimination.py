@@ -13,8 +13,8 @@ replaces this in milestone 4+.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import structlog
 
