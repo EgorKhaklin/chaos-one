@@ -3,6 +3,7 @@ using System.IO;
 using ChaosOne.Cameras;
 using ChaosOne.Core;
 using ChaosOne.Scenarios;
+using ChaosOne.Threats;
 using ChaosOne.UI;
 using Unity.Cinemachine;
 using UnityEditor;
@@ -86,8 +87,11 @@ namespace ChaosOne.EditorScripts
             go.transform.rotation = Quaternion.Euler(8f, 0f, 0f);
 
             go.AddComponent<CinemachineBrain>();
-
             go.AddComponent<AudioListener>();
+            var selector = go.AddComponent<ThreatTrackSelector>();
+            var so = new SerializedObject(selector);
+            AssignField(so, "selectionCamera", camera);
+            so.ApplyModifiedPropertiesWithoutUndo();
         }
 
         private static void BuildLight()
@@ -134,14 +138,14 @@ namespace ChaosOne.EditorScripts
 
         private static void BuildDemoTrack()
         {
-            // A plain primitive sphere with a TrailRenderer so the camera
-            // sees motion on launch. The real Stage pipeline replaces this
-            // with ThreatTrack + TrackVisuals + envelope shader once a
-            // ThreatArchetype.asset exists.
+            // Sphere primitive sized for the scene scale. The trigger
+            // collider stays so ThreatTrackSelector can raycast onto it.
             var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             go.name = "DemoTrack";
             go.transform.localScale = new Vector3(160f, 160f, 160f);
-            Object.DestroyImmediate(go.GetComponent<SphereCollider>());
+
+            var col = go.GetComponent<SphereCollider>();
+            if (col != null) col.isTrigger = true;
 
             var renderer = go.GetComponent<MeshRenderer>();
             if (renderer != null)
@@ -163,7 +167,30 @@ namespace ChaosOne.EditorScripts
                 trail.sharedMaterial = defaultLineMaterial;
             }
 
+            var archetype = EnsureDemoArchetype();
+            var track = go.AddComponent<ThreatTrack>();
+            track.Configure(archetype, "HGV-WRAITH-01", TrackState.ConfidentRV);
+
             go.AddComponent<DemoTrackMover>();
+        }
+
+        private const string DemoArchetypePath = "Assets/_ChaosOne/Data/HGV_Demo.asset";
+
+        private static ThreatArchetype EnsureDemoArchetype()
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<ThreatArchetype>(DemoArchetypePath);
+            if (existing != null) return existing;
+
+            var dir = Path.GetDirectoryName(DemoArchetypePath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+            var archetype = ScriptableObject.CreateInstance<ThreatArchetype>();
+            // displayName / classKind / colors fall back to dataclass
+            // defaults set in ThreatArchetype's SerializeField initializers.
+            AssetDatabase.CreateAsset(archetype, DemoArchetypePath);
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[auto-scene] created {DemoArchetypePath}");
+            return archetype;
         }
 
         private const string PanelSettingsPath = "Assets/_ChaosOne/UI/PanelSettings.asset";
