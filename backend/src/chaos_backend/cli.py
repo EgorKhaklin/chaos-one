@@ -176,9 +176,104 @@ def cmd_trajectory(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo(args: argparse.Namespace) -> int:
+    """Run a complete simulated engagement end-to-end."""
+    try:
+        kind = scenarios.ScenarioKind(args.scenario)
+    except ValueError:
+        print(f"unknown scenario kind: {args.scenario}", file=sys.stderr)
+        return 2
+
+    scenario = scenarios.build(kind, seed=args.seed)
+    track_ids = [f"TRK-{i:03d}" for i in range(args.tracks)]
+
+    discrim_service = DiscriminationService()
+    coa_service = CourseOfActionService()
+    playbook_service = AdversaryModelService()
+
+    classifications = [discrim_service.classify(track_id=tid, sample_count=1) for tid in track_ids]
+
+    coa_bundle = coa_service.generate(
+        classified_track_ids=track_ids,
+        roe_envelope_id=args.envelope,
+    )
+
+    playbook = playbook_service.current()
+
+    initial_state = ThreatState(
+        position_m=np.array([0.0, 32_000.0, 0.0]),
+        velocity_mps=np.array([2_400.0, -40.0, 0.0]),
+    )
+    samples = trajectory(initial_state, duration_s=60.0, dt_s=1.0)
+
+    _emit(
+        {
+            "scenario": {
+                "kind": scenario.kind.value,
+                "seed": scenario.seed,
+                "event_count": len(scenario.events),
+                "first_event": {
+                    "t": scenario.events[0].timestamp_s,
+                    "type": scenario.events[0].event_type,
+                },
+            },
+            "discrimination": {
+                "track_count": len(classifications),
+                "consensus": {
+                    c.track_id: {
+                        "class": c.consensus_class,
+                        "confidence": round(c.calibrated_confidence, 3),
+                    }
+                    for c in classifications
+                },
+            },
+            "course_of_action": {
+                "recommended_id": coa_bundle.recommended_id,
+                "options": [
+                    {
+                        "id": item.id,
+                        "headline": item.headline,
+                        "leakage": round(item.expected_leakage.point, 3),
+                        "escalation": item.escalation_level,
+                    }
+                    for item in coa_bundle.items
+                ],
+            },
+            "adversary": {
+                "cost_imposition_index": round(playbook.cost_imposition_index, 3),
+                "top_hypothesis": {
+                    "playbook_id": playbook.hypotheses[0].playbook_id,
+                    "weight": round(playbook.hypotheses[0].weight, 3),
+                },
+            },
+            "kinematics": {
+                "sample_count": len(samples),
+                "initial_altitude_m": float(samples[0].position_m[1]),
+                "final_altitude_m": float(samples[-1].position_m[1]),
+                "ground_impact": float(samples[-1].position_m[1]) <= 0.0,
+            },
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chaos-backend-cli")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    d = sub.add_parser(
+        "demo",
+        help="run a complete simulated engagement end-to-end",
+    )
+    d.add_argument(
+        "--scenario",
+        choices=[k.value for k in scenarios.ScenarioKind],
+        default="peer_salvo",
+    )
+    d.add_argument("--seed", type=int, default=42)
+    d.add_argument("--tracks", type=int, default=4)
+    d.add_argument("--envelope", default="ROE-2")
+    d.set_defaults(func=cmd_demo)
 
     s = sub.add_parser("scenario", help="emit a scenario event sequence")
     s.add_argument("kind", choices=[k.value for k in scenarios.ScenarioKind])

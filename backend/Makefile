@@ -46,6 +46,9 @@ type:
 server:
 	$(VENV)/bin/chaos-backend
 
+demo:
+	$(VENV)/bin/chaos-backend-cli demo --scenario peer_salvo --seed 42 --tracks 4
+
 clean:
 	rm -rf $(VENV)
 	rm -rf src/chaos_backend/generated/chaos_one_pb2*.py

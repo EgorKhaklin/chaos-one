@@ -47,3 +47,13 @@ def test_trajectory_runs_and_falls() -> None:
     payload = _run("trajectory", "--apogee", "30000", "--duration", "30", "--dt", "0.5")
     assert payload["sample_count"] > 1
     assert payload["initial_altitude_m"] >= payload["final_altitude_m"]
+
+
+def test_demo_runs_full_engagement() -> None:
+    payload = _run("demo", "--scenario", "peer_salvo", "--seed", "7", "--tracks", "3")
+    assert payload["scenario"]["kind"] == "peer_salvo"
+    assert payload["discrimination"]["track_count"] == 3
+    assert payload["course_of_action"]["recommended_id"] == "COA-B"
+    assert len(payload["course_of_action"]["options"]) == 3
+    assert "cost_imposition_index" in payload["adversary"]
+    assert payload["kinematics"]["sample_count"] > 1
