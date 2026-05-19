@@ -49,6 +49,9 @@ server:
 demo:
 	$(VENV)/bin/chaos-backend-cli demo --scenario peer_salvo --seed 42 --tracks 4
 
+bench:
+	$(PY) -m benchmarks.run_all
+
 clean:
 	rm -rf $(VENV)
 	rm -rf src/chaos_backend/generated/chaos_one_pb2*.py
