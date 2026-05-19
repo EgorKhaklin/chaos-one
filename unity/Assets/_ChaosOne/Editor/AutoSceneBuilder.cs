@@ -8,6 +8,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.UIElements;
 
 namespace ChaosOne.EditorScripts
 {
@@ -51,6 +52,13 @@ namespace ChaosOne.EditorScripts
             var vcam = BuildCinemachineCamera();
             BuildCinemachineDirector(vcam);
             BuildChaosOneRoot();
+
+            var panelSettings = EnsurePanelSettings();
+            BuildUIDocument<ModeHUD>("UI_ModeHUD", "Assets/_ChaosOne/UI/ModeHUD.uxml", panelSettings);
+            BuildUIDocument<AdversaryMirror>("UI_AdversaryMirror", "Assets/_ChaosOne/UI/AdversaryMirror.uxml", panelSettings);
+            BuildUIDocument<CalmChannel>("UI_CalmChannel", "Assets/_ChaosOne/UI/CalmChannel.uxml", panelSettings);
+            BuildUIDocument<TrackInfoPanel>("UI_TrackInfoPanel", "Assets/_ChaosOne/UI/TrackInfoPanel.uxml", panelSettings);
+            BuildDecisionsPanel(panelSettings);
 
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene, ScenePath);
@@ -119,6 +127,72 @@ namespace ChaosOne.EditorScripts
             var go = new GameObject("ChaosOne");
             go.AddComponent<SceneBootstrap>();
             go.AddComponent<PerfOverlay>();
+        }
+
+        private const string PanelSettingsPath = "Assets/_ChaosOne/UI/PanelSettings.asset";
+
+        private static PanelSettings EnsurePanelSettings()
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<PanelSettings>(PanelSettingsPath);
+            if (existing != null) return existing;
+
+            var dir = Path.GetDirectoryName(PanelSettingsPath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+            var panel = ScriptableObject.CreateInstance<PanelSettings>();
+            AssetDatabase.CreateAsset(panel, PanelSettingsPath);
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[auto-scene] created {PanelSettingsPath}");
+            return panel;
+        }
+
+        private static GameObject BuildUIDocument<TController>(string name, string uxmlPath, PanelSettings panel)
+            where TController : MonoBehaviour
+        {
+            var go = new GameObject(name);
+            var doc = go.AddComponent<UIDocument>();
+            doc.panelSettings = panel;
+
+            var uxml = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(uxmlPath);
+            if (uxml == null)
+            {
+                Debug.LogWarning($"[auto-scene] UXML not found at {uxmlPath} — UI surface will be empty");
+            }
+            else
+            {
+                doc.visualTreeAsset = uxml;
+            }
+
+            go.AddComponent<TController>();
+            return go;
+        }
+
+        private static void BuildDecisionsPanel(PanelSettings panel)
+        {
+            var go = BuildUIDocument<DecisionsPanel>(
+                "UI_DecisionsPanel",
+                "Assets/_ChaosOne/UI/DecisionsPanel.uxml",
+                panel);
+
+            var coaCardUxml = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>("Assets/_ChaosOne/UI/COACard.uxml");
+            if (coaCardUxml == null)
+            {
+                Debug.LogWarning("[auto-scene] COACard.uxml not found — DecisionsPanel will not render cards");
+                return;
+            }
+
+            var decisions = go.GetComponent<DecisionsPanel>();
+            var so = new SerializedObject(decisions);
+            var prop = so.FindProperty("coaCardTemplate");
+            if (prop != null)
+            {
+                prop.objectReferenceValue = coaCardUxml;
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
+            else
+            {
+                Debug.LogWarning("[auto-scene] DecisionsPanel.coaCardTemplate field not found");
+            }
         }
 
         private static void RegisterInBuildSettings()
