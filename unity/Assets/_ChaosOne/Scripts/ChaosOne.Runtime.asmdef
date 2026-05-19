@@ -1,0 +1,23 @@
+{
+    "name": "ChaosOne.Runtime",
+    "rootNamespace": "ChaosOne",
+    "references": [
+        "GUID:b8e0c7ff7e334e84d8c8ee6ec1d0d35a",
+        "Unity.Cinemachine",
+        "Unity.InputSystem",
+        "Unity.Splines",
+        "Unity.Mathematics",
+        "Unity.Timeline",
+        "Unity.VisualEffectGraph.Runtime",
+        "Unity.RenderPipelines.HighDefinition.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

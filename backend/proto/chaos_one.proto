@@ -1,0 +1,152 @@
+syntax = "proto3";
+
+package chaos_one.v1;
+
+option csharp_namespace = "ChaosOne.Backend.V1";
+
+import "google/protobuf/timestamp.proto";
+
+// ──────────────────────────────────────────────────────────────────
+// Services
+// ──────────────────────────────────────────────────────────────────
+
+service Discrimination {
+    rpc Classify(ClassifyRequest) returns (ClassifyResponse);
+    rpc StreamUpdates(stream TrackObservation) returns (stream DiscriminationUpdate);
+}
+
+service CourseOfAction {
+    rpc Generate(COARequest) returns (COAResponse);
+}
+
+service AdversaryModel {
+    rpc CurrentPlaybook(AdversaryQuery) returns (PlaybookDistribution);
+    rpc StreamPlaybook(AdversaryQuery) returns (stream PlaybookDistribution);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Shared types
+// ──────────────────────────────────────────────────────────────────
+
+enum ThreatClass {
+    THREAT_CLASS_UNSPECIFIED = 0;
+    THREAT_CLASS_HGV = 1;
+    THREAT_CLASS_MARV = 2;
+    THREAT_CLASS_BALLISTIC_RV = 3;
+    THREAT_CLASS_CRUISE_MISSILE = 4;
+    THREAT_CLASS_UAS = 5;
+    THREAT_CLASS_DECOY = 6;
+    THREAT_CLASS_DEBRIS = 7;
+}
+
+message Vec3 {
+    double x = 1;
+    double y = 2;
+    double z = 3;
+}
+
+message OutcomeBand {
+    double point = 1;
+    double low = 2;
+    double high = 3;
+}
+
+message SensorContribution {
+    string sensor_id = 1;
+    double trust_weight = 2;
+    google.protobuf.Timestamp at = 3;
+    bool corroborated = 4;
+}
+
+message TrackObservation {
+    string track_id = 1;
+    google.protobuf.Timestamp captured_at = 2;
+    Vec3 position_m = 3;
+    Vec3 velocity_mps = 4;
+    repeated SensorContribution contributions = 5;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Discrimination
+// ──────────────────────────────────────────────────────────────────
+
+message ClassifyRequest {
+    TrackObservation observation = 1;
+    repeated TrackObservation history = 2;
+}
+
+message EnsembleVote {
+    string model_id = 1;
+    ThreatClass predicted = 2;
+    double weight = 3;
+}
+
+message ClassifyResponse {
+    string track_id = 1;
+    repeated EnsembleVote votes = 2;
+    double calibrated_confidence = 3;
+    double certified_radius_l2 = 4;
+}
+
+message DiscriminationUpdate {
+    ClassifyResponse classification = 1;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Course of action
+// ──────────────────────────────────────────────────────────────────
+
+message MagazineDelta {
+    int32 ngi = 1;
+    int32 sm3 = 2;
+    int32 sm6 = 3;
+    int32 pac3 = 4;
+    double hel_megajoules = 5;
+}
+
+message EscalationScore {
+    string level = 1;
+    double numeric = 2;
+}
+
+message CourseOfActionItem {
+    string id = 1;
+    string headline = 2;
+    string description = 3;
+    OutcomeBand expected_leakage = 4;
+    MagazineDelta cost = 5;
+    EscalationScore escalation = 6;
+    string releasability = 7;
+    double countdown_seconds = 8;
+}
+
+message COARequest {
+    repeated ClassifyResponse classifications = 1;
+    string roe_envelope_id = 2;
+}
+
+message COAResponse {
+    repeated CourseOfActionItem coa = 1;
+    string recommended_id = 2;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Adversary model
+// ──────────────────────────────────────────────────────────────────
+
+message AdversaryQuery {
+    google.protobuf.Timestamp at = 1;
+}
+
+message PlaybookHypothesis {
+    string playbook_id = 1;
+    string display_name = 2;
+    double weight = 3;
+    double delta_30s = 4;
+}
+
+message PlaybookDistribution {
+    google.protobuf.Timestamp at = 1;
+    repeated PlaybookHypothesis hypotheses = 2;
+    double cost_imposition_index = 3;
+}

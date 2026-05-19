@@ -1,0 +1,36 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{cs,csx}]
+indent_size = 4
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_prefer_braces = true:warning
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_expression_bodied_methods = when_on_single_line:silent
+csharp_style_expression_bodied_properties = when_on_single_line:suggestion
+dotnet_sort_system_directives_first = true
+
+[*.{py,pyi}]
+indent_size = 4
+max_line_length = 100
+
+[*.{json,yml,yaml,toml,proto}]
+indent_size = 2
+
+[*.{uxml,uss}]
+indent_size = 4
+
+[*.md]
+trim_trailing_whitespace = false

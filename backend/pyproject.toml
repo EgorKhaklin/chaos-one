@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chaos-backend"
+version = "0.1.0"
+description = "Chaos One backend services: discrimination, COA generation, adversary model."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Chaos One" }]
+
+dependencies = [
+    "grpcio>=1.66.0",
+    "grpcio-tools>=1.66.0",
+    "protobuf>=5.27.0",
+    "numpy>=1.26.0",
+    "pydantic>=2.8.0",
+    "structlog>=24.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.6.0",
+    "mypy>=1.10.0",
+    "types-protobuf>=5.27.0",
+]
+ml = [
+    "torch>=2.3.0",
+    "lightgbm>=4.5.0",
+    "scikit-learn>=1.5.0",
+]
+optim = [
+    "ortools>=9.10",
+]
+
+[project.scripts]
+chaos-backend = "chaos_backend.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["chaos_backend*"]
+
+[tool.setuptools.package-data]
+chaos_backend = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,39 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <ui:VisualElement name="root" class="track-panel" style="display: none;">
+        <ui:VisualElement class="track-panel__header">
+            <ui:Label name="header-label" text="TRACK" class="track-panel__header-label" />
+            <ui:VisualElement class="track-panel__header-rule" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="track-panel__row">
+            <ui:Label text="ID" class="track-panel__key" />
+            <ui:Label name="track-id" text="--" class="track-panel__value track-panel__value--mono" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="track-panel__row">
+            <ui:Label text="CLASS" class="track-panel__key" />
+            <ui:Label name="track-class" text="--" class="track-panel__value track-panel__value--accent" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="track-panel__row">
+            <ui:Label text="SPEED" class="track-panel__key" />
+            <ui:Label name="track-speed" text="--" class="track-panel__value track-panel__value--mono" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="track-panel__row">
+            <ui:Label text="ALT" class="track-panel__key" />
+            <ui:Label name="track-altitude" text="--" class="track-panel__value track-panel__value--mono" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="track-panel__row track-panel__row--column">
+            <ui:Label text="CONFIDENCE" class="track-panel__key" />
+            <ui:VisualElement class="track-panel__bar">
+                <ui:VisualElement name="confidence-fill" class="track-panel__bar-fill" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <ui:VisualElement class="track-panel__footer">
+            <ui:Label text="C1 / NATO-RELEASABLE" class="track-panel__footer-label" />
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>

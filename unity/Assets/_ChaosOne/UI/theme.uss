@@ -1,0 +1,108 @@
+/* ──────────────────────────────────────────────────────────────────
+   Chaos One — UI Toolkit theme
+   Navy canvas, warm off-white type, muted gold accent.
+   ────────────────────────────────────────────────────────────────── */
+
+.track-panel {
+    position: absolute;
+    right: 24px;
+    top: 24px;
+    width: 296px;
+    padding: 18px 18px 14px 18px;
+    background-color: rgba(10, 22, 40, 0.86);
+    border-left-color: rgb(201, 169, 97);
+    border-left-width: 2px;
+    border-top-color: rgba(201, 169, 97, 0.32);
+    border-top-width: 1px;
+    border-right-color: rgba(201, 169, 97, 0.32);
+    border-right-width: 1px;
+    border-bottom-color: rgba(201, 169, 97, 0.32);
+    border-bottom-width: 1px;
+}
+
+.track-panel__header {
+    flex-direction: column;
+    margin-bottom: 14px;
+}
+
+.track-panel__header-label {
+    color: rgb(201, 169, 97);
+    font-size: 12px;
+    -unity-font-style: bold;
+    letter-spacing: 4px;
+    margin-bottom: 6px;
+}
+
+.track-panel__header-rule {
+    height: 1px;
+    background-color: rgba(201, 169, 97, 0.4);
+}
+
+.track-panel__row {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.track-panel__row--column {
+    flex-direction: column;
+    align-items: stretch;
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+.track-panel__key {
+    color: rgba(232, 226, 208, 0.52);
+    font-size: 10px;
+    letter-spacing: 2px;
+    -unity-font-style: bold;
+}
+
+.track-panel__value {
+    color: rgb(232, 226, 208);
+    font-size: 12px;
+    -unity-font-style: bold;
+}
+
+.track-panel__value--mono {
+    -unity-font-definition: none;
+}
+
+.track-panel__value--accent {
+    color: rgb(201, 169, 97);
+}
+
+.track-panel__bar {
+    margin-top: 6px;
+    width: 100%;
+    height: 4px;
+    background-color: rgba(232, 226, 208, 0.10);
+    border-top-left-radius: 1px;
+    border-top-right-radius: 1px;
+    border-bottom-left-radius: 1px;
+    border-bottom-right-radius: 1px;
+}
+
+.track-panel__bar-fill {
+    height: 100%;
+    width: 0%;
+    background-color: rgb(201, 169, 97);
+    border-top-left-radius: 1px;
+    border-top-right-radius: 1px;
+    border-bottom-left-radius: 1px;
+    border-bottom-right-radius: 1px;
+}
+
+.track-panel__footer {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top-color: rgba(201, 169, 97, 0.20);
+    border-top-width: 1px;
+}
+
+.track-panel__footer-label {
+    color: rgba(232, 226, 208, 0.40);
+    font-size: 9px;
+    letter-spacing: 1px;
+}

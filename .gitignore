@@ -1,0 +1,77 @@
+# ──────────────────────────────────────────────────────────────────
+# Unity
+# ──────────────────────────────────────────────────────────────────
+unity/[Ll]ibrary/
+unity/[Tt]emp/
+unity/[Oo]bj/
+unity/[Bb]uild/
+unity/[Bb]uilds/
+unity/[Ll]ogs/
+unity/[Uu]ser[Ss]ettings/
+unity/[Mm]emoryCaptures/
+unity/[Rr]ecordings/
+
+# Unity Asset meta files are tracked; .meta-orphans are not.
+unity/Assets/AssetStoreTools*
+
+# Burst
+unity/[Aa]ssets/[Aa]ssetStoreTools*
+unity/.consulo/
+unity/sysinfo.txt
+
+# Visual Studio / Rider IDE files
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+.idea/
+.vs/
+.vscode/
+
+# Crash / autoreport
+sysinfo.txt
+crashlytics-build.properties
+
+# OS noise
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ──────────────────────────────────────────────────────────────────
+# Python backend
+# ──────────────────────────────────────────────────────────────────
+backend/.venv/
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.egg-info/
+backend/**/*.egg-info/
+backend/dist/
+backend/build/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/.coverage
+backend/htmlcov/
+backend/src/chaos_backend/generated/
+
+# ──────────────────────────────────────────────────────────────────
+# Local secrets / config
+# ──────────────────────────────────────────────────────────────────
+.env
+.env.local
+*.local.json
