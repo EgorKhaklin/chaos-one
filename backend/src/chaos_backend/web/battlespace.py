@@ -1458,22 +1458,118 @@ function drawTrails() {
 }
 
 // ═════════════════════════════════════════════════════════════════════
-//   LAYER: engagement allocations + intercept points
+//   INTERCEPT MATHEMATICS
+//
+//   Two related problems:
+//
+//   1. Engagement planning (planIntercept). Given a threat whose
+//      trajectory is known parametrically, sweep φ ∈ [φ_now, 1] over
+//      the threat's normalised flight phase and pick the φ* that
+//      minimises |T_threat(φ) − T_interceptor(φ)|, where
+//        T_threat(φ)      = launchAt + φ·flightTime − cyclePhase
+//        T_interceptor(φ) = boost + max(0, dist(launcher,r_T(φ)) − boostDist) / cruise
+//      Returns a feasibility flag — false if the soonest the
+//      interceptor can be there is still after the threat has
+//      already passed. This is what kills the "ghost shoot": if a
+//      defender can't catch the threat, the salvo is never armed.
+//
+//   2. In-flight guidance (leadInterceptTime). Once airborne, the
+//      missile shouldn't chase where the target IS — it has to lead.
+//      Treating the target as locally linear at velocity v_T, the
+//      collision-course equation reduces to a quadratic in t:
+//        (v_I² − |v_T|²) t² − 2(d · v_T) t − |d|² = 0
+//      with d = r_T(now) − r_I(now). The smaller positive root is
+//      the lead time; the aim point is r_T(now + t*). This is the
+//      classic proportional-navigation lead solution, applied each
+//      frame so the missile flies a true collision course.
 // ═════════════════════════════════════════════════════════════════════
-function predictIntercept(track, defender, interceptorV) {
-    // 5 fixed-point iterations of: TTI = distance(target(t = TTI)) / v
-    // Converges quickly for the typical 1-15s intercept window.
-    let tti = 6.0;
-    for (let i = 0; i < 6; i++) {
-        const target = trackPosAt(track, clock.now + tti);
-        const d = Math.hypot(
-            target[0] - defender.pos[0],
-            target[1] - defender.pos[1],
-            target[2] - defender.pos[2],
-        );
-        tti = d / interceptorV;
+
+// Average interceptor speed including boost (used by planIntercept
+// only — in-flight uses the live boost+cruise model).
+const KINETIC_AVG_MPS = 935;
+const KINETIC_CRUISE_MPS = 1100;
+const KINETIC_BOOST_DURATION = 0.55;
+const KINETIC_BOOST_AVG_MPS = 660;
+
+function planIntercept(track, defender, avgSpeed) {
+    const launcherPos = [defender.pos[0], 380, defender.pos[2]];
+    const boostDist = KINETIC_BOOST_AVG_MPS * KINETIC_BOOST_DURATION;
+    // Earliest phase the threat can be intercepted from now: at minimum
+    // the radar must have acquired it (track.launchAt + 0.3 s detection
+    // delay), and we need a small reaction window.
+    const REACTION = 0.35;
+    const nowCyc = cyclePhase();
+    const minPhase = Math.max(
+        0,
+        (Math.max(track.launchAt + 0.3, nowCyc + REACTION) - track.launchAt) / track.flightTime
+    );
+    if (minPhase > 1) return null;
+
+    const samples = 60;
+    let best = null;
+    for (let i = 0; i <= samples; i++) {
+        const ph = minPhase + (1 - minPhase) * (i / samples);
+        const tAtCycle = track.launchAt + ph * track.flightTime;
+        const threatT = tAtCycle - nowCyc;
+        if (threatT < REACTION) continue;
+        const point = V3.bezQ(track.launch, track.apogee, track.terminal, ph);
+        const dist = V3.len(V3.sub(point, launcherPos));
+        const interceptorT = (dist <= boostDist)
+            ? dist / KINETIC_BOOST_AVG_MPS
+            : KINETIC_BOOST_DURATION + (dist - boostDist) / KINETIC_CRUISE_MPS;
+        if (interceptorT > threatT + 0.05) continue;     // infeasible
+        const slack = threatT - interceptorT;
+        // Prefer the SMALLEST positive slack — converge on the
+        // crossing point where threat and interceptor times match.
+        if (best === null || slack < best.slack) {
+            best = { tti: interceptorT, threatT, slack, ph, point };
+        }
     }
-    return { tti, point: trackPosAt(track, clock.now + tti) };
+    return best;        // null if no feasible intercept along trajectory
+}
+
+// Quadratic lead solution for an interceptor at p_I cruising at v_I
+// against a target at r_T moving at v_T (locally linear). Returns the
+// smallest positive root of (v_I²−|v_T|²)t² − 2(d·v_T)t − |d|² = 0, or
+// null if no real positive root.
+function leadInterceptTime(p_I, r_T, v_T, v_I) {
+    const d = V3.sub(r_T, p_I);
+    const dvt = V3.dot(d, v_T);
+    const vTvT = V3.dot(v_T, v_T);
+    const dd = V3.dot(d, d);
+    const a = v_I * v_I - vTvT;
+    const b = -2 * dvt;
+    const c = -dd;
+    if (Math.abs(a) < 1e-6) {
+        if (Math.abs(b) < 1e-6) return null;
+        const t = -c / b;
+        return t > 0 ? t : null;
+    }
+    const disc = b * b - 4 * a * c;
+    if (disc < 0) return null;
+    const sqrtD = Math.sqrt(disc);
+    const t1 = (-b + sqrtD) / (2 * a);
+    const t2 = (-b - sqrtD) / (2 * a);
+    let best = Infinity;
+    if (t1 > 0 && t1 < best) best = t1;
+    if (t2 > 0 && t2 < best) best = t2;
+    return isFinite(best) ? best : null;
+}
+
+// Numerical derivative of the threat trajectory at time t (world m/s).
+function trackVelAt(track, t) {
+    const eps = 0.05;
+    const a = trackPosAt(track, t);
+    const b = trackPosAt(track, t + eps);
+    return V3.scale(V3.sub(b, a), 1 / eps);
+}
+
+// Legacy name retained for the dashed planning lines + the stats TTI.
+// Now backed by planIntercept so it shares the same math.
+function predictIntercept(track, defender, _interceptorV) {
+    const p = planIntercept(track, defender, KINETIC_AVG_MPS);
+    if (p) return { tti: p.tti, point: p.point, feasible: true };
+    return { tti: 0, point: trackPos(track), feasible: false };
 }
 
 function drawEngagementAllocations() {
@@ -1534,33 +1630,55 @@ function launchSalvo(coaId, alloc, launchOffsetSec) {
     const tr  = findTrack(alloc.target);
     if (!def || !tr) return;
     if (engagement.killedTracks.has(tr.id)) return;
+
+    // Pre-flight feasibility check (kinetic only — directed energy is
+    // effectively instantaneous so it's always feasible while the
+    // target is in line-of-sight).
+    let plan = null;
+    if (alloc.kind === 'KINETIC') {
+        plan = planIntercept(tr, def, KINETIC_AVG_MPS);
+        if (!plan) {
+            pushLogOnce(
+                `infeasible-${coaId}-${alloc.defender}-${alloc.target}`,
+                `intercept infeasible <em>${alloc.defender}→${tr.id}</em> · no kinematic solution`,
+            );
+            return;     // no ghost shot
+        }
+    }
+
     engagement.salvos.push({
         id: `${coaId}-${alloc.defender}-${alloc.target}-${engagement.salvos.length}`,
         coa: coaId,
         defenderId: alloc.defender,
         targetId: alloc.target,
         kind: alloc.kind,
-        // Boost + cruise. Boost is mostly-vertical for `boostDuration`
-        // seconds, then the interceptor pitches over toward the target
-        // with a finite turn rate. Real Mach-15 missiles aren't visible
-        // frame-to-frame, so we render a survey-able M2.6 (~900 m/s)
-        // average — large enough to see the arc, small enough to read
-        // the chase.
-        cruiseSpeedMps:  alloc.kind === 'DIRECTED' ? 0 : 1_100,
+        cruiseSpeedMps:  alloc.kind === 'DIRECTED' ? 0 : KINETIC_CRUISE_MPS,
         boostSpeedMps:   alloc.kind === 'DIRECTED' ? 0 : 220,
         accelMps2:       alloc.kind === 'DIRECTED' ? 0 : 1_400,
         turnRateRadSec:  alloc.kind === 'DIRECTED' ? 0 : 2.4,
-        boostDuration:   alloc.kind === 'DIRECTED' ? 0 : 0.55,
+        boostDuration:   alloc.kind === 'DIRECTED' ? 0 : KINETIC_BOOST_DURATION,
         directedDwell:   alloc.kind === 'DIRECTED' ? 0.4 : 0,
-        launchedAt: clock.now + launchOffsetSec,
+        // `commitAt`  — when the operator pressed AUTHORIZE
+        // `armedAt`   — when the target was acquired by radar (the
+        //               salvo holds at the launcher until then)
+        // `launchedAt`— when the missile actually lifts off
+        commitAt: clock.now + launchOffsetSec,
+        armedAt: null,
+        launchedAt: null,
+        // Planned intercept point + planned TTI from planIntercept.
+        // These are refined each frame by leadInterceptTime once the
+        // missile is airborne.
+        plannedTTI:   plan ? plan.tti   : null,
+        plannedPoint: plan ? plan.point : null,
         position: [def.pos[0], 380, def.pos[2]],
         velocity: [0, 0, 0],
         speed: 0,
-        state: 'queued',           // queued → inflight → splash → done
+        state: 'queued',           // queued (pre-arm) → armed (on launcher, target acquired) →
+                                   // inflight → splash → done
         impactPoint: null,
         impactAt: null,
         color: alloc.kind === 'DIRECTED' ? [1.00, 0.88, 0.55] : [0.55, 0.85, 1.00],
-        trail: [],                 // recent worldspace positions for plotting
+        trail: [],
     });
 }
 
@@ -1588,17 +1706,46 @@ function turnToward(velUnit, targetDir, omega, dt) {
 function tickSalvos(dt) {
     for (const s of engagement.salvos) {
         if (s.state === 'done') continue;
-        if (clock.now < s.launchedAt) continue;
+        if (clock.now < s.commitAt) continue;        // pre-commit hold
         const tr = findTrack(s.targetId);
         if (!tr || engagement.killedTracks.has(s.targetId)) {
             s.state = 'done';
             continue;
         }
+        const def = findDefender(s.defenderId);
+
+        // ── Acquisition gate ──────────────────────────────────────
+        // queued → armed: the salvo is committed but the radar hasn't
+        // yet acquired the threat. Re-plan continuously while we wait;
+        // refuse to lift off until we have a feasible solution AND the
+        // track has been visible for at least the detection window.
+        if (s.state === 'queued') {
+            if (!trackVisible(tr)) continue;
+            // Re-plan now that the track is up. This both keeps the
+            // plan tight when the cycle wraps and catches the case
+            // where waiting too long left no feasible intercept.
+            if (s.kind === 'KINETIC') {
+                const plan = planIntercept(tr, def, KINETIC_AVG_MPS);
+                if (!plan) {
+                    s.state = 'done';
+                    pushLogOnce(
+                        `miss-${tr.id}-${s.defenderId}`,
+                        `intercept infeasible <em>${s.defenderId}→${tr.id}</em> · target out of envelope`,
+                    );
+                    continue;
+                }
+                s.plannedTTI = plan.tti;
+                s.plannedPoint = plan.point;
+            }
+            s.armedAt = clock.now;
+            s.launchedAt = clock.now;
+            s.state = 'inflight';
+        }
+
         const targetPos = trackPos(tr);
 
         if (s.kind === 'DIRECTED') {
             s.position = V3.lerp(s.position, targetPos, 0.5);
-            if (s.state === 'queued') s.state = 'inflight';
             if (clock.now - s.launchedAt >= s.directedDwell) {
                 s.state = 'splash';
                 s.impactPoint = targetPos;
@@ -1608,58 +1755,71 @@ function tickSalvos(dt) {
             continue;
         }
 
-        // ── Kinetic interceptor: boost + pitchover + finite turn rate ──
+        // ── Kinetic interceptor ───────────────────────────────────
+        // Lead-angle guidance via the quadratic collision-course
+        // solution. Aim point is r_T(now + t*), recomputed each frame.
         const flightT = clock.now - s.launchedAt;
-        const toTarget = V3.sub(targetPos, s.position);
-        const distance = V3.len(toTarget);
-        const targetDir = V3.scale(toTarget, 1 / Math.max(1, distance));
+        const cruise = s.speed > 0 ? s.speed : s.cruiseSpeedMps;
+        const v_T = trackVelAt(tr, clock.now);
+        const t_lead = leadInterceptTime(s.position, targetPos, v_T, Math.max(cruise, KINETIC_BOOST_AVG_MPS));
+        const aimPoint = (t_lead !== null)
+            ? trackPosAt(tr, clock.now + t_lead)
+            : targetPos;                                    // fallback: pure pursuit
 
-        // Desired direction: during boost, blend from straight-up to
-        // target. After boost, full pursuit. The blend gives the
-        // characteristic vertical-launch-then-pitch-over arc.
+        const toAim = V3.sub(aimPoint, s.position);
+        const aimDistance = V3.len(toAim);
+        const aimDir = V3.scale(toAim, 1 / Math.max(1, aimDistance));
+
+        // During boost, blend up-axis → aim direction so the missile
+        // leaves the launcher mostly-vertical and pitches over.
         let desiredDir;
         if (flightT < s.boostDuration) {
-            const blend = Math.pow(flightT / s.boostDuration, 1.4);  // ease-in
+            const blend = Math.pow(flightT / s.boostDuration, 1.4);
             const up = [0, 1, 0];
-            const m = [
-                up[0] * (1 - blend) + targetDir[0] * blend,
-                up[1] * (1 - blend) + targetDir[1] * blend,
-                up[2] * (1 - blend) + targetDir[2] * blend,
-            ];
-            desiredDir = V3.norm(m);
+            desiredDir = V3.norm([
+                up[0] * (1 - blend) + aimDir[0] * blend,
+                up[1] * (1 - blend) + aimDir[1] * blend,
+                up[2] * (1 - blend) + aimDir[2] * blend,
+            ]);
         } else {
-            desiredDir = targetDir;
+            desiredDir = aimDir;
         }
 
-        // Speed: accelerate from boost speed up to cruise speed.
         const targetSpeed = (flightT < s.boostDuration) ? s.boostSpeedMps : s.cruiseSpeedMps;
         s.speed = Math.min(targetSpeed, (s.speed || s.boostSpeedMps) + s.accelMps2 * dt);
 
-        // Velocity direction turns toward desired direction at a
-        // limited angular rate so the missile can't snap-track.
-        const currentDir = (s.speed > 0 && V3.len(s.velocity) > 0)
-            ? V3.norm(s.velocity)
-            : [0, 1, 0];
+        const currentDir = (V3.len(s.velocity) > 0) ? V3.norm(s.velocity) : [0, 1, 0];
         const newDir = turnToward(currentDir, desiredDir, s.turnRateRadSec, dt);
         s.velocity = V3.scale(newDir, s.speed);
 
+        // Live distance to the actual threat (not the aim point) drives
+        // the splash threshold so the warhead detonates at proximity.
+        const liveDist = V3.len(V3.sub(targetPos, s.position));
         const stepLen = s.speed * dt;
-        if (distance < Math.max(140, stepLen * 1.4)) {
-            // Splash
+        if (liveDist < Math.max(140, stepLen * 1.4)) {
             s.state = 'splash';
             s.impactPoint = targetPos;
             s.impactAt = clock.now;
             killTrack(tr.id, targetPos);
         } else {
             s.position = V3.add(s.position, V3.scale(s.velocity, dt));
-            if (s.state === 'queued') s.state = 'inflight';
-            // Sample the curving flight path for the trail (~30Hz).
             const samplePeriod = 1 / 30;
             if (!s._lastSampled || (clock.now - s._lastSampled) >= samplePeriod) {
                 s.trail.push(s.position.slice());
                 if (s.trail.length > 48) s.trail.shift();
                 s._lastSampled = clock.now;
             }
+        }
+
+        // Safety floor: if a kinetic salvo has dropped below 20 m and
+        // hasn't yet impacted, it's a leakage. Mark done, log it. Stops
+        // dud salvos from ploughing into the deck and rendering forever.
+        if (s.position[1] < 20 && flightT > 0.8 && s.state !== 'splash') {
+            s.state = 'done';
+            pushLogOnce(
+                `leak-${s.id}`,
+                `interceptor leakage <em>${s.defenderId}→${tr.id}</em> · ground impact`,
+            );
         }
     }
     // Garbage-collect old splashes
@@ -1682,7 +1842,26 @@ function killTrack(targetId, worldPoint) {
 
 function drawSalvos() {
     for (const s of engagement.salvos) {
-        if (s.state === 'queued' || s.state === 'done') continue;
+        if (s.state === 'done') continue;
+
+        // Pending salvo: committed but waiting for the radar to acquire
+        // the assigned target. Draw a small pulsing arming reticle on
+        // the launcher so the operator sees it's tasked but not yet fired.
+        if (s.state === 'queued' && clock.now >= s.commitAt) {
+            const def = findDefender(s.defenderId);
+            if (!def) continue;
+            const dp = proj.project([def.pos[0], 380, def.pos[2]]);
+            if (!dp) continue;
+            const phase = (clock.now * 4) % 1;
+            const r = 10 + phase * 10;
+            ctx.strokeStyle = `rgba(220, 160, 60, ${0.75 * (1 - phase)})`;
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.arc(dp.sx, dp.sy, r, 0, Math.PI * 2);
+            ctx.stroke();
+            continue;
+        }
+        if (s.state === 'queued') continue;
         const def = findDefender(s.defenderId);
         const defScreen = def ? proj.project([def.pos[0], 380, def.pos[2]]) : null;
         const projP = proj.project(s.position);
@@ -1904,28 +2083,68 @@ function drawRadarSweep() {
     ctx.lineTo(cx + Math.cos(sweepAngle - Math.PI / 2) * R, cy + Math.sin(sweepAngle - Math.PI / 2) * R);
     ctx.stroke();
 
-    // blips: project each track's ground position into the radar's
-    // top-down frame, scaled so 12.5km maps to R.
+    // Defender batteries — small green chevrons at their bearings,
+    // anchored at the centre. Gives the operator a quick reference for
+    // which way each effector is facing.
+    for (const b of DEFENDER_BATTERIES) {
+        const range = Math.hypot(b.pos[0], b.pos[2]);
+        const bearing = Math.atan2(b.pos[0], b.pos[2]);
+        const bx = cx + Math.sin(bearing) * (range / 12_500) * R;
+        const by = cy - Math.cos(bearing) * (range / 12_500) * R;
+        ctx.fillStyle = rgbStr(b.color, 0.55);
+        ctx.beginPath();
+        ctx.arc(bx, by, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Threat blips. A track is "displayed" only after the radar's
+    // sweep line has crossed its bearing at least once since it
+    // appeared — that's what makes the radar feel like a sensor and
+    // not omniscient. A small sub-pixel sensor jitter is added so the
+    // blip "breathes".
+    const sweepBearing = sweepAngle;     // 0 = up = +Z; matches our atan2(x,z)
+    let blipCount = 0;
     for (const tr of TRACKS) {
         if (!trackVisible(tr)) continue;
         if (engagement.killedTracks.has(tr.id)) continue;
         const p = trackPos(tr);
         const range = Math.hypot(p[0], p[2]);
         if (range > 13_000) continue;
-        const bearing = Math.atan2(p[0], p[2]);   // 0 = +Z (north)
-        const bx = cx + Math.sin(bearing) * (range / 12_500) * R;
-        const by = cy - Math.cos(bearing) * (range / 12_500) * R;
-        ctx.fillStyle = rgbStr(tr.color, 0.95);
+        const trackBearing = Math.atan2(p[0], p[2]);
+        // Difference between sweep and track bearing, wrapped to [0, 2π).
+        let phase = (sweepBearing - trackBearing) % (Math.PI * 2);
+        if (phase < 0) phase += Math.PI * 2;
+        // Blip brightness fades as the sweep moves away (afterglow ~0.5s).
+        const afterglow = Math.exp(-phase * 1.4);
+        const acquired = (clock.now - (tr.launchAt + 0.1)) > (Math.PI * 2) / 2.83;  // at least one full sweep since launch
+        // Range jitter: ±60 m over a slow oscillation per track id.
+        const noiseSeed = tr.id.charCodeAt(0) * 0.13 + tr.id.charCodeAt(4) * 0.07;
+        const jitter = 60 * Math.sin(clock.now * 3.1 + noiseSeed);
+        const dispRange = range + jitter;
+        const bx = cx + Math.sin(trackBearing) * (dispRange / 12_500) * R;
+        const by = cy - Math.cos(trackBearing) * (dispRange / 12_500) * R;
+        const alpha = acquired ? (0.55 + 0.4 * afterglow) : (0.35 * afterglow);
+        const rad = acquired ? (2.0 + 1.2 * afterglow) : 1.4;
+        ctx.fillStyle = rgbStr(tr.color, alpha);
         ctx.beginPath();
-        ctx.arc(bx, by, 2.2, 0, Math.PI * 2);
+        ctx.arc(bx, by, rad, 0, Math.PI * 2);
         ctx.fill();
+        // Ring on freshly-acquired tracks (first ~1s after launch).
+        if ((clock.now - tr.launchAt) < 1.2 && (clock.now - tr.launchAt) > 0) {
+            ctx.strokeStyle = rgbStr(tr.color, 0.6);
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            ctx.arc(bx, by, rad + 4 + (clock.now - tr.launchAt) * 6, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        blipCount++;
     }
 
     // label
     ctx.fillStyle = 'rgba(150, 220, 160, 0.85)';
     ctx.font = '700 8px ui-monospace, "SF Mono", Menlo, monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('RADAR · 12.5 km', cx, cy + R + 12);
+    ctx.fillText(`RADAR · 12.5 km · ${blipCount} TRK`, cx, cy + R + 12);
     ctx.textAlign = 'start';
 }
 
