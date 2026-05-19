@@ -189,3 +189,29 @@ def test_engagement_diff_404_when_either_missing(isolated_client: TestClient) ->
     b_missing = isolated_client.get(f"/engagements/{real_id}/diff/eng_nope")
     assert a_missing.status_code == 404
     assert b_missing.status_code == 404
+
+
+def test_landing_inline_diff_link_appears_for_repeated_scenario(
+    isolated_client: TestClient,
+) -> None:
+    # Two runs of the same scenario; the newer row should get a
+    # "diff prev" link pointing at the older one.
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "1"})
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "2"})
+
+    records = isolated_client.get("/engagements").json()["engagements"]
+    newest, oldest = records[0]["id"], records[1]["id"]
+
+    body = isolated_client.get("/").text
+    assert "DIFF" in body
+    assert f"/engagements/{newest}/diff/{oldest}" in body
+
+
+def test_landing_no_diff_link_when_scenario_appears_only_once(
+    isolated_client: TestClient,
+) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "1"})
+    isolated_client.post("/play", data={"scenario": "regional_crisis", "seed": "1"})
+
+    body = isolated_client.get("/").text
+    assert 'class="muted"' in body

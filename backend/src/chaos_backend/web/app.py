@@ -163,6 +163,7 @@ _LANDING_HTML = """<!doctype html>
             font-size: 11px;
             letter-spacing: 1px;
         }
+        .muted { color: rgba(232, 226, 208, 0.30); }
 
         .meta {
             margin-top: 36px;
@@ -455,17 +456,37 @@ def _render_recent_engagements(repo: EngagementRepository) -> str:
     records = repo.recent(limit=10)
     if not records:
         return '<div class="engagements__empty">no engagements yet — run one above</div>'
-    rows = "\n".join(
-        f"""<tr>
-            <td class="seq"><a href="/engagements/{r.id}/audit.html">{r.id}</a></td>
-            <td class="t">{r.scenario}</td>
-            <td class="t">{r.seed}</td>
-            <td class="t">{r.events}</td>
-            <td class="t">{"OK" if r.verified else "BROKEN"}</td>
-            <td class="t">{r.started_at}</td>
-        </tr>"""
-        for r in records
-    )
+
+    # records[] is ordered newest-first. For each row, the "previous run
+    # of the same scenario" is the next item further down the list that
+    # shares the scenario kind.
+    previous_id_by_index: dict[int, str | None] = {}
+    for i, record in enumerate(records):
+        previous_id_by_index[i] = None
+        for candidate in records[i + 1 :]:
+            if candidate.scenario == record.scenario:
+                previous_id_by_index[i] = candidate.id
+                break
+
+    rows: list[str] = []
+    for i, r in enumerate(records):
+        prev = previous_id_by_index[i]
+        if prev:
+            diff_cell = f'<a href="/engagements/{r.id}/diff/{prev}">diff prev</a>'
+        else:
+            diff_cell = '<span class="muted">—</span>'
+        rows.append(
+            f"""<tr>
+                <td class="seq"><a href="/engagements/{r.id}/audit.html">{r.id}</a></td>
+                <td class="t">{r.scenario}</td>
+                <td class="t">{r.seed}</td>
+                <td class="t">{r.events}</td>
+                <td class="t">{"OK" if r.verified else "BROKEN"}</td>
+                <td class="t">{r.started_at}</td>
+                <td class="t">{diff_cell}</td>
+            </tr>"""
+        )
+
     return f"""
 <div class="engagements">
     <div class="engagements__title">RECENT ENGAGEMENTS</div>
@@ -478,10 +499,11 @@ def _render_recent_engagements(repo: EngagementRepository) -> str:
                 <th>EVENTS</th>
                 <th>CHAIN</th>
                 <th>STARTED (UTC)</th>
+                <th>DIFF</th>
             </tr>
         </thead>
         <tbody>
-            {rows}
+            {"".join(rows)}
         </tbody>
     </table>
 </div>
