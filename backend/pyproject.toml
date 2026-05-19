@@ -57,6 +57,7 @@ chaos_backend = ["py.typed"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["src/chaos_backend/generated"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "RUF"]
@@ -67,6 +68,12 @@ python_version = "3.11"
 strict = true
 warn_unreachable = true
 disallow_untyped_defs = true
+exclude = "src/chaos_backend/generated/.*"
+
+[[tool.mypy.overrides]]
+module = "chaos_backend.generated.*"
+ignore_errors = true
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

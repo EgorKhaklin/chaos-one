@@ -24,29 +24,19 @@ import signal
 import grpc  # type: ignore[import-untyped]
 import structlog
 
-from chaos_backend.services.adversary_model import AdversaryModelService
-from chaos_backend.services.coa_generator import CourseOfActionService
-from chaos_backend.services.discrimination import DiscriminationService
-
 logger = structlog.get_logger(__name__)
 
 
 async def serve(host: str, port: int, *, with_stubs: bool) -> None:
     server = grpc.aio.server()
 
-    discrimination = DiscriminationService()
-    coa = CourseOfActionService()
-    adversary = AdversaryModelService()
-
     if with_stubs:
         try:
-            stubs = importlib.import_module("chaos_backend.generated.chaos_one_pb2_grpc")
+            adapters = importlib.import_module("chaos_backend.grpc_adapters")
         except ImportError:
             logger.warning("generated_stubs_missing", hint="run grpc_tools.protoc")
         else:
-            stubs.add_DiscriminationServicer_to_server(discrimination, server)
-            stubs.add_CourseOfActionServicer_to_server(coa, server)
-            stubs.add_AdversaryModelServicer_to_server(adversary, server)
+            adapters.register_all(server)
             logger.info("services_registered")
     else:
         logger.info("running_without_stubs")
