@@ -344,6 +344,26 @@ def cmd_audit_html(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_web(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+    except ImportError:
+        print(
+            "the web command requires the [web] extras: pip install -e '.[web]'",
+            file=sys.stderr,
+        )
+        return 2
+
+    uvicorn.run(
+        "chaos_backend.web:app",
+        host=args.host,
+        port=args.port,
+        reload=bool(args.reload),
+        log_level="info",
+    )
+    return 0
+
+
 def cmd_play(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -416,6 +436,15 @@ def build_parser() -> argparse.ArgumentParser:
     play.add_argument("--output", required=True, help="path to the JSONL audit log to write")
     play.add_argument("--html", default=None, help="optional HTML output path")
     play.set_defaults(func=cmd_play)
+
+    web = sub.add_parser(
+        "web",
+        help="serve the FastAPI dashboard (requires [web] or [dev] extras)",
+    )
+    web.add_argument("--host", default="127.0.0.1")
+    web.add_argument("--port", type=int, default=8000)
+    web.add_argument("--reload", action="store_true", help="auto-reload on file change")
+    web.set_defaults(func=cmd_web)
 
     d = sub.add_parser(
         "demo",
