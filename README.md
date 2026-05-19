@@ -92,16 +92,55 @@ chaos-one/
       grpc_adapters.py                proto <-> dataclass translation
       server.py                       gRPC server entry
       cli.py                          chaos-backend-cli
-    tests/                            pytest suite
+      launcher.py                     chaos-one (single-binary entrypoint)
+      web/                            FastAPI dashboard + SSE streaming
+      storage/                        SQLite engagement catalog
+      observability.py                structlog + request_id middleware
+    tests/                            pytest suite (140+ tests)
     Makefile                          install / protos / lint / type /
-                                      test / server / demo / clean
-  .github/workflows/backend.yml       CI: ruff + mypy + pytest
+                                      test / ci / bench / package / clean
+    chaos-one.spec                    PyInstaller spec for the launcher
+  .github/workflows/
+    backend.yml                       CI: ruff + mypy + pytest
+    codeql.yml                        Security analysis
+    release.yml                       Cross-platform binary builds
   LICENSE                             Apache 2.0
 ```
 
 ---
 
-## Quickstart — backend
+## Quickstart — one binary
+
+```
+cd backend
+make install
+make protos
+make package        # PyInstaller builds dist/chaos-one (or Chaos One.app)
+./dist/chaos-one    # boots the dashboard and opens the browser
+```
+
+The resulting binary is self-contained: no Python, no pip install, no
+venv on the host. Cross-platform binaries are built by GitHub Actions
+on every `v*` tag push; grab them from the [Releases](https://github.com/EgorKhaklin/chaos-one/releases) page.
+
+### Launching the Unity build alongside
+
+When a Unity build exists, the launcher can spawn it as a child
+process so one icon boots the whole prototype. Three ways to point at
+the Unity binary:
+
+```
+./dist/chaos-one --unity-app /path/to/Chaos\ One.app   # explicit
+CHAOS_UNITY_APP=/path/to/Chaos\ One.app ./dist/chaos-one   # env var
+# or drop the Unity build into a `unity-build/` directory next to
+# the chaos-one binary — auto-discovered on launch.
+```
+
+The Unity child is terminated cleanly when the backend exits.
+
+---
+
+## Quickstart — backend (development)
 
 ```
 cd backend
