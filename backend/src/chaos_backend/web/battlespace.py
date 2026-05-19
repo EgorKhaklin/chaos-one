@@ -165,6 +165,25 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             border-left-color: var(--gold);
             background: rgba(22, 34, 56, 0.96);
         }
+        .coa--authorized {
+            border-left-color: rgb(150, 220, 160);
+            background: rgba(16, 38, 30, 0.96);
+        }
+        .coa__badge--ok {
+            background: rgb(150, 220, 160);
+            color: var(--bg-mid);
+        }
+        .coa__status {
+            margin-top: 4px;
+            padding: 8px 10px;
+            text-align: center;
+            color: rgb(150, 220, 160);
+            background: rgba(150, 220, 160, 0.08);
+            border: 1px solid rgba(150, 220, 160, 0.32);
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 2.5px;
+        }
         .coa__top {
             display: flex; align-items: center; justify-content: space-between;
             margin-bottom: 6px;
@@ -831,14 +850,32 @@ const TRACKS = [
     },
 ];
 
-const ENGAGEMENT_ALLOC = [
-    { defender: 'NGI',  target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 5_400 },
-    { defender: 'NGI',  target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 5_400 },
-    { defender: 'HEL',  target: 'MARV-VIPER-03', kind: 'DIRECTED', speed: 2.998e8 },
-];
-
 const findDefender = (id) => DEFENDER_BATTERIES.find(d => d.id === id);
 const findTrack    = (id) => TRACKS.find(t => t.id === id);
+
+// Per-COA allocation. Map keyed by COA id → list of {defender, target,
+// kind, speed}. Authorization replays the right list.
+const COA_ALLOCATIONS = {
+    'COA-A': [
+        { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 5_400 },
+        { defender: 'NGI', target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 5_400 },
+        { defender: 'NGI', target: 'MARV-VIPER-03', kind: 'KINETIC',  speed: 5_400 },
+    ],
+    'COA-B': [
+        { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 5_400 },
+        { defender: 'NGI', target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 5_400 },
+        { defender: 'HEL', target: 'MARV-VIPER-03', kind: 'DIRECTED', speed: 2.998e8 },
+    ],
+    'COA-C': [
+        { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 5_400 },
+        { defender: 'NGI', target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 5_400 },
+    ],
+};
+
+// The currently-recommended allocation (shown as dashed lines while
+// COAs are on the table). After authorization, the actual salvos take
+// over and this is hidden.
+const ENGAGEMENT_ALLOC = COA_ALLOCATIONS['COA-B'];
 
 // ═════════════════════════════════════════════════════════════════════
 //   THREAT MOTION
@@ -855,6 +892,41 @@ function trackPos(tr, tNow) {
 function trackSpeedMach(tr, tNow) {
     const t = trackPhase(tr, tNow);
     return tr.machBase * (1 - 0.18 * Math.sin(Math.PI * t)) * (0.95 + 0.10 * t);
+}
+
+// ═════════════════════════════════════════════════════════════════════
+//   ENGAGEMENT STATE — what the operator has actually committed to.
+// ═════════════════════════════════════════════════════════════════════
+const engagement = {
+    authorizedCOA: null,          // 'COA-A' | 'COA-B' | 'COA-C' | null
+    authorizedAt: null,           // sec on clock
+    objected: new Set(),          // COA ids the operator rejected
+    salvos: [],                   // live projectiles
+    splashes: [],                 // post-impact rings, faded out by age
+    killedTracks: new Set(),      // track ids that have been killed
+    pulseUntil: 0,                // gold ring confirmation effect
+    notice: null,                 // { text, until }
+    pushedLog: new Set(),         // dedupe one-shot log lines
+};
+
+function pushLogOnce(key, line) {
+    if (engagement.pushedLog.has(key)) return;
+    engagement.pushedLog.add(key);
+    CALM_LIVE.unshift(line);
+    if (CALM_LIVE.length > 14) CALM_LIVE.pop();
+    lastCalmK = -2;     // force re-render of calm channel next frame
+}
+
+function resetEngagement() {
+    engagement.authorizedCOA = null;
+    engagement.authorizedAt = null;
+    engagement.objected = new Set();
+    engagement.salvos = [];
+    engagement.splashes = [];
+    engagement.killedTracks = new Set();
+    engagement.pulseUntil = 0;
+    engagement.notice = null;
+    engagement.pushedLog = new Set();
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -1255,6 +1327,7 @@ function drawTrails() {
     const subdivisions = 8;        // Catmull-Rom interior samples per segment
     for (let ti = 0; ti < TRACKS.length; ti++) {
         const tr = TRACKS[ti];
+        if (engagement.killedTracks.has(tr.id)) continue;
         const s = trails[ti];
         const n = s.length;
         if (n < 4) continue;
@@ -1313,11 +1386,15 @@ function predictIntercept(track, defender, interceptorV) {
 }
 
 function drawEngagementAllocations() {
+    // Hide the planning overlay once the operator authorizes — the
+    // actual salvo lines take over.
+    if (engagement.authorizedCOA !== null) return;
     if (!(cyclePhase() >= 8 && cyclePhase() < 21)) return;
     for (const a of ENGAGEMENT_ALLOC) {
         const def = findDefender(a.defender);
         const tr  = findTrack(a.target);
         if (!def || !tr) continue;
+        if (engagement.killedTracks.has(tr.id)) continue;
         const { tti, point } = predictIntercept(tr, def, a.speed);
         const defS = proj.project([def.pos[0], 380, def.pos[2]]);
         const intS = proj.project(point);
@@ -1356,6 +1433,188 @@ function drawEngagementAllocations() {
 }
 
 // ═════════════════════════════════════════════════════════════════════
+//   SALVOS — operator-launched interceptors. State machine:
+//     planned  ->  inflight  ->  splash  ->  done.
+//   Position uses proportional pursuit: each step, the salvo accelerates
+//   along the unit vector toward the target's current world position.
+// ═════════════════════════════════════════════════════════════════════
+function launchSalvo(coaId, alloc, launchOffsetSec) {
+    const def = findDefender(alloc.defender);
+    const tr  = findTrack(alloc.target);
+    if (!def || !tr) return;
+    if (engagement.killedTracks.has(tr.id)) return;
+    engagement.salvos.push({
+        id: `${coaId}-${alloc.defender}-${alloc.target}-${engagement.salvos.length}`,
+        coa: coaId,
+        defenderId: alloc.defender,
+        targetId: alloc.target,
+        kind: alloc.kind,
+        // Kinetic interceptors visualised at a survey-able 1600 m/s on
+        // the canvas (real interceptor speeds compress engagements into
+        // sub-frame intervals); directed-energy is treated as
+        // effectively instantaneous (0.4 s dwell to a kill).
+        speedMps: alloc.kind === 'DIRECTED' ? 0 : 1_600,
+        directedDwell: alloc.kind === 'DIRECTED' ? 0.4 : 0,
+        launchedAt: clock.now + launchOffsetSec,
+        position: [def.pos[0], 380, def.pos[2]],
+        state: 'queued',           // queued → inflight → splash → done
+        impactPoint: null,
+        impactAt: null,
+        color: alloc.kind === 'DIRECTED' ? [1.00, 0.88, 0.55] : [0.55, 0.85, 1.00],
+    });
+}
+
+function tickSalvos(dt) {
+    for (const s of engagement.salvos) {
+        if (s.state === 'done') continue;
+        if (clock.now < s.launchedAt) continue;
+        const tr = findTrack(s.targetId);
+        if (!tr || engagement.killedTracks.has(s.targetId)) {
+            s.state = 'done';
+            continue;
+        }
+        const targetPos = trackPos(tr, clock.now);
+        if (s.kind === 'DIRECTED') {
+            // Beam stays on the threat for `directedDwell` seconds, then
+            // kills. The "position" lerps toward the target for visual.
+            s.position = V3.lerp(s.position, targetPos, 0.5);
+            if (s.state === 'queued') s.state = 'inflight';
+            if (clock.now - s.launchedAt >= s.directedDwell) {
+                s.state = 'splash';
+                s.impactPoint = targetPos;
+                s.impactAt = clock.now;
+                killTrack(tr.id, targetPos);
+            }
+            continue;
+        }
+        // Kinetic: proportional pursuit toward the threat.
+        const toTarget = V3.sub(targetPos, s.position);
+        const dist = V3.len(toTarget);
+        const stepLen = s.speedMps * dt;
+        if (dist < Math.max(120, stepLen * 1.2)) {
+            // Splash
+            s.state = 'splash';
+            s.impactPoint = targetPos;
+            s.impactAt = clock.now;
+            killTrack(tr.id, targetPos);
+        } else {
+            const dir = V3.scale(toTarget, 1 / Math.max(1, dist));
+            s.position = V3.add(s.position, V3.scale(dir, stepLen));
+            if (s.state === 'queued') s.state = 'inflight';
+        }
+    }
+    // Garbage-collect old splashes
+    const cutoff = clock.now - 1.2;
+    engagement.salvos = engagement.salvos.filter(s =>
+        s.state !== 'splash' || (s.impactAt && s.impactAt > cutoff)
+    );
+    engagement.splashes = engagement.splashes.filter(sp => sp.until > clock.now);
+}
+
+function killTrack(targetId, worldPoint) {
+    if (engagement.killedTracks.has(targetId)) return;
+    engagement.killedTracks.add(targetId);
+    engagement.splashes.push({ point: worldPoint, born: clock.now, until: clock.now + 1.1 });
+    pushLogOnce(
+        `kill-${targetId}`,
+        `target destroyed <em>${targetId}</em>`,
+    );
+}
+
+function drawSalvos() {
+    for (const s of engagement.salvos) {
+        if (s.state === 'queued' || s.state === 'done') continue;
+        const def = findDefender(s.defenderId);
+        const defScreen = def ? proj.project([def.pos[0], 380, def.pos[2]]) : null;
+        const projP = proj.project(s.position);
+        if (s.kind === 'DIRECTED') {
+            // Beam — solid line from defender to current "position" with
+            // a halo at the target end.
+            if (!defScreen || !projP) continue;
+            ctx.strokeStyle = rgbStr(s.color, 0.85);
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.moveTo(defScreen.sx, defScreen.sy);
+            ctx.lineTo(projP.sx, projP.sy);
+            ctx.stroke();
+            ctx.fillStyle = rgbStr(s.color, 0.95);
+            ctx.beginPath();
+            ctx.arc(projP.sx, projP.sy, 4, 0, Math.PI * 2);
+            ctx.fill();
+            continue;
+        }
+        // Kinetic: dot + smoke trail back toward defender
+        if (!projP) continue;
+        if (defScreen) {
+            const grad = ctx.createLinearGradient(defScreen.sx, defScreen.sy, projP.sx, projP.sy);
+            grad.addColorStop(0.00, rgbStr(s.color, 0.00));
+            grad.addColorStop(0.80, rgbStr(s.color, 0.45));
+            grad.addColorStop(1.00, rgbStr(s.color, 0.95));
+            ctx.strokeStyle = grad;
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.moveTo(defScreen.sx, defScreen.sy);
+            ctx.lineTo(projP.sx, projP.sy);
+            ctx.stroke();
+        }
+        // Hot leading dot + halo
+        const halo = ctx.createRadialGradient(projP.sx, projP.sy, 0, projP.sx, projP.sy, 14);
+        halo.addColorStop(0.00, rgbStr(s.color, 0.95));
+        halo.addColorStop(0.45, rgbStr(s.color, 0.40));
+        halo.addColorStop(1.00, rgbStr(s.color, 0.00));
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(projP.sx, projP.sy, 14, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+        ctx.beginPath();
+        ctx.arc(projP.sx, projP.sy, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function drawSplashes() {
+    for (const sp of engagement.splashes) {
+        const p = proj.project(sp.point);
+        if (!p) continue;
+        const age = (clock.now - sp.born) / (sp.until - sp.born);
+        if (age < 0 || age > 1) continue;
+        const r1 = 8 + age * 60;
+        const r2 = r1 * 0.45;
+        // Outer expanding ring (white-hot → amber → gone)
+        ctx.strokeStyle = `rgba(255, 220, 140, ${(1 - age) * 0.95})`;
+        ctx.lineWidth = 2.2 - age * 1.6;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, r1, 0, Math.PI * 2);
+        ctx.stroke();
+        // Inner hot core (yellow → red)
+        const hot = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, r2);
+        hot.addColorStop(0.00, `rgba(255, 255, 220, ${(1 - age) * 0.95})`);
+        hot.addColorStop(0.50, `rgba(255, 180,  60, ${(1 - age) * 0.55})`);
+        hot.addColorStop(1.00, `rgba(220,  80,  40, 0)`);
+        ctx.fillStyle = hot;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, r2, 0, Math.PI * 2);
+        ctx.fill();
+        // Shrapnel ticks
+        ctx.strokeStyle = `rgba(255, 200, 100, ${(1 - age) * 0.65})`;
+        ctx.lineWidth = 0.9;
+        const spokes = 8;
+        for (let i = 0; i < spokes; i++) {
+            const a = (i / spokes) * Math.PI * 2 + age * 0.5;
+            const x1 = p.sx + Math.cos(a) * r1 * 0.5;
+            const y1 = p.sy + Math.sin(a) * r1 * 0.5;
+            const x2 = p.sx + Math.cos(a) * r1 * 0.95;
+            const y2 = p.sy + Math.sin(a) * r1 * 0.95;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════
 //   LAYER: tracks (glowing kinetic markers)
 // ═════════════════════════════════════════════════════════════════════
 // Draws four L-shaped corner brackets around (cx, cy) at half-size `s`,
@@ -1378,6 +1637,7 @@ function drawCornerBrackets(cx, cy, s, len, col, width) {
 
 function drawTracks() {
     for (const tr of TRACKS) {
+        if (engagement.killedTracks.has(tr.id)) continue;
         const p = trackPos(tr, clock.now);
         const sp = proj.project(p);
         if (!sp) continue;
@@ -1563,11 +1823,6 @@ function drawScanlines() {
 function positionCallouts() {
     const container = document.getElementById('callouts');
     for (const tr of TRACKS) {
-        const p = trackPos(tr, clock.now);
-        const sp = proj.project(p);
-        const speed = trackSpeedMach(tr, clock.now);
-        const altKm = (p[1] / 1000).toFixed(1);
-        const rngKm = (Math.hypot(p[0], p[2]) / 1000).toFixed(1);
         let node = document.getElementById('co-' + tr.id);
         if (!node) {
             node = document.createElement('div');
@@ -1576,7 +1831,13 @@ function positionCallouts() {
             node.innerHTML = `<span class="callout__id"></span><span class="callout__data"></span>`;
             container.appendChild(node);
         }
+        if (engagement.killedTracks.has(tr.id)) { node.style.display = 'none'; continue; }
+        const p = trackPos(tr, clock.now);
+        const sp = proj.project(p);
         if (!sp) { node.style.display = 'none'; continue; }
+        const speed = trackSpeedMach(tr, clock.now);
+        const altKm = (p[1] / 1000).toFixed(1);
+        const rngKm = (Math.hypot(p[0], p[2]) / 1000).toFixed(1);
         node.style.display = '';
         node.style.left = (sp.sx + 18) + 'px';
         node.style.top  = (sp.sy - 4) + 'px';
@@ -1619,13 +1880,17 @@ const COAS = {
 // COA appearance is shifted earlier in the cycle so they reveal ~1s
 // after the mode trips, not 4s after — feels much snappier.
 function activeCOAs(t) {
+    if (engagement.authorizedCOA) {
+        // Show only the authorized card after authorize is clicked.
+        return [{ ...COAS[engagement.authorizedCOA], remaining: 0, authorized: true }];
+    }
     if (t < 6 || t >= 21) return [];
     const offset = t - 6;
     return [
         { ...COAS['COA-B'], remaining: clamp(COAS['COA-B'].countdownSec - offset, 0, COAS['COA-B'].countdownSec) },
         { ...COAS['COA-A'], remaining: clamp(COAS['COA-A'].countdownSec - offset, 0, COAS['COA-A'].countdownSec) },
         { ...COAS['COA-C'], remaining: clamp(COAS['COA-C'].countdownSec - offset, 0, COAS['COA-C'].countdownSec) },
-    ];
+    ].filter(c => !engagement.objected.has(c.id));
 }
 function modeAt(t) {
     if (t >= 5 && t < 24) return { letter: 'B', name: 'SENSOR DEGRADED', color: 'amber' };
@@ -1647,17 +1912,30 @@ function renderHUD(t) {
 function renderDecisions(t) {
     const stack = document.getElementById('coaStack');
     const coas = activeCOAs(t);
-    // Use a signature to avoid rewriting the DOM every frame — keeps
-    // CSS animations and bar transitions clean.
-    const sig = coas.map(c => c.id).join('|') + (coas.length === 0 ? 'X' : '');
+    const sig = coas.map(c => c.id + (c.authorized ? ':A' : '')).join('|')
+              + (coas.length === 0 ? 'X' : '')
+              + '|' + [...engagement.objected].sort().join(',');
     if (sig !== lastCoaSig) {
         if (coas.length === 0) {
             stack.innerHTML = `<div class="decisions__empty">STAND BY — NO ACTIVE COA</div>`;
         } else {
             stack.innerHTML = coas.map(c => {
-                const badge = c.rec ? '<span class="coa__badge">RECOMMENDED</span>' : '';
+                const cls = c.authorized
+                    ? 'coa coa--authorized'
+                    : 'coa' + (c.rec ? ' coa--rec' : '');
+                const badge = c.authorized
+                    ? '<span class="coa__badge coa__badge--ok">AUTHORIZED</span>'
+                    : (c.rec ? '<span class="coa__badge">RECOMMENDED</span>' : '');
+                const buttonsHTML = c.authorized
+                    ? '<div class="coa__status">EFFECTORS COMMITTED · IMPACT IN PROGRESS</div>'
+                    : `
+                        <div class="coa__btns">
+                            <button class="coa__btn coa__btn--p" data-action="auth" data-coa="${c.id}">AUTHORIZE</button>
+                            <button class="coa__btn coa__btn--s" data-action="obj" data-coa="${c.id}">OBJECT</button>
+                        </div>
+                    `;
                 return `
-                    <div class="coa ${c.rec ? 'coa--rec' : ''}" data-id="${c.id}" data-cd="${c.countdownSec}">
+                    <div class="${cls}" data-id="${c.id}" data-cd="${c.countdownSec}">
                         <div class="coa__top">
                             <span class="coa__id">${c.id}</span>
                             ${badge}
@@ -1666,26 +1944,80 @@ function renderDecisions(t) {
                         <div class="coa__why">${c.why}</div>
                         <div class="coa__metrics">${c.metrics.map(m => `<div>${m}</div>`).join('')}</div>
                         <div class="coa__bar"><div class="coa__bar-fill" style="width:100%"></div></div>
-                        <div class="coa__btns">
-                            <button class="coa__btn coa__btn--p">AUTHORIZE</button>
-                            <button class="coa__btn coa__btn--s">OBJECT</button>
-                        </div>
+                        ${buttonsHTML}
                     </div>
                 `;
             }).join('');
         }
         lastCoaSig = sig;
     }
-    // Update only the bar widths per frame (cheap, no relayout)
-    if (coas.length > 0) {
+    // Update only the bar widths per frame
+    if (coas.length > 0 && !engagement.authorizedCOA) {
         const cards = stack.querySelectorAll('.coa');
         for (let i = 0; i < cards.length && i < coas.length; i++) {
-            const card = cards[i];
             const c = coas[i];
-            const fill = card.querySelector('.coa__bar-fill');
+            const fill = cards[i].querySelector('.coa__bar-fill');
             if (fill) fill.style.width = ((c.remaining / c.countdownSec) * 100).toFixed(1) + '%';
         }
     }
+}
+
+// One-shot delegated click handler — survives every renderDecisions
+// rebuild because it listens on the stable parent #coaStack.
+document.getElementById('coaStack').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const coaId  = btn.dataset.coa;
+    if (action === 'auth') authorizeCOA(coaId);
+    if (action === 'obj')  objectCOA(coaId);
+});
+// Also accept the keyboard mnemonics shown in the panel footer.
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === 'a' || e.key === 'A') {
+        const rec = Object.values(COAS).find(c => c.rec);
+        if (rec && !engagement.authorizedCOA && !engagement.objected.has(rec.id)) {
+            authorizeCOA(rec.id);
+        }
+    } else if (e.key === 'o' || e.key === 'O') {
+        const rec = Object.values(COAS).find(c => c.rec);
+        if (rec && !engagement.authorizedCOA && !engagement.objected.has(rec.id)) {
+            objectCOA(rec.id);
+        }
+    }
+});
+
+function authorizeCOA(coaId) {
+    if (engagement.authorizedCOA) return;
+    const allocs = COA_ALLOCATIONS[coaId];
+    if (!allocs) return;
+    engagement.authorizedCOA = coaId;
+    engagement.authorizedAt = clock.now;
+    engagement.pulseUntil = clock.now + 0.8;
+    let stagger = 0;
+    for (const a of allocs) {
+        launchSalvo(coaId, a, stagger);
+        stagger += 0.15;
+    }
+    const kinetic = allocs.filter(a => a.kind === 'KINETIC').length;
+    const directed = allocs.filter(a => a.kind === 'DIRECTED').length;
+    const summary = [
+        kinetic ? `${kinetic}× NGI` : null,
+        directed ? `${directed}× HEL` : null,
+    ].filter(Boolean).join(' + ');
+    CALM_LIVE.unshift(`COA authorized <em>${coaId}</em> · ${summary} commit · audit logged`);
+    if (CALM_LIVE.length > 14) CALM_LIVE.pop();
+    lastCalmK = -2;
+    lastCoaSig = '';   // force re-render
+}
+
+function objectCOA(coaId) {
+    if (engagement.authorizedCOA) return;
+    engagement.objected.add(coaId);
+    CALM_LIVE.unshift(`COA objected <em>${coaId}</em> · operator dissent · audit logged`);
+    if (CALM_LIVE.length > 14) CALM_LIVE.pop();
+    lastCalmK = -2;
+    lastCoaSig = '';
 }
 
 const HYPS_BASE = [
@@ -1756,16 +2088,15 @@ const CALM_BASE = [
     'COA proposed <em>COA-B (RECOMMENDED)</em>',
     'COA proposed <em>COA-A (alternative)</em>',
     'COA proposed <em>COA-C (alternative)</em>',
-    'COA authorized <em>COA-B</em> · 2× NGI + HEL release',
-    'mode B → A  <em>NOMINAL</em>',
     'audit chain  <em>OK · 14 entries</em>',
 ];
+const CALM_LIVE = CALM_BASE.slice();    // mutable; operator events unshift here
 let lastCalmK = -1;
 function renderCalm() {
-    const k = Math.floor(clock.now * 0.4) % CALM_BASE.length;
+    const k = Math.floor(clock.now * 0.4) % CALM_LIVE.length;
     if (k === lastCalmK) return;
     lastCalmK = k;
-    const ordered = CALM_BASE.slice(k).concat(CALM_BASE.slice(0, k));
+    const ordered = CALM_LIVE.slice(k).concat(CALM_LIVE.slice(0, k));
     document.getElementById('calmList').innerHTML = ordered.map(s => `<span>${s}</span>`).join('');
 }
 
@@ -1851,6 +2182,11 @@ function frame(ts) {
     while (accum >= FIXED_STEP) {
         clock.tick(FIXED_STEP);
         cam.tick(FIXED_STEP);
+        tickSalvos(FIXED_STEP);
+        // Auto-reset the engagement when the demo cycle wraps around.
+        if (engagement.authorizedCOA && (clock.now - engagement.authorizedAt) > 10) {
+            resetEngagement();
+        }
         trailAccum += FIXED_STEP;
         if (trailAccum >= 1 / 30) {
             pushTrailSamples();
@@ -1873,7 +2209,9 @@ function frame(ts) {
     drawDefenderBatteries();
     drawTrails();
     drawEngagementAllocations();
+    drawSalvos();
     drawTracks();
+    drawSplashes();
     drawCompassTape();
     drawRadarSweep();
     drawScanlines();
