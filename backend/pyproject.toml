@@ -39,6 +39,7 @@ optim = [
 
 [project.scripts]
 chaos-backend = "chaos_backend.server:main"
+chaos-backend-cli = "chaos_backend.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
