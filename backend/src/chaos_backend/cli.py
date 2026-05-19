@@ -25,6 +25,8 @@ from chaos_backend.audit import (
     AuditLogReader,
     AuditLogVerifier,
     AuditLogWriter,
+    compare_log_paths,
+    render_diff_html,
     render_html_from_path,
 )
 from chaos_backend.services.adversary_model import AdversaryModelService
@@ -344,6 +346,41 @@ def cmd_audit_html(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit_diff(args: argparse.Namespace) -> int:
+    result = compare_log_paths(args.a, args.b)
+
+    if args.html:
+        from pathlib import Path
+
+        html_path = Path(args.html)
+        html_path.parent.mkdir(parents=True, exist_ok=True)
+        html_path.write_text(render_diff_html(result), encoding="utf-8")
+
+    _emit(
+        {
+            "a": str(args.a),
+            "b": str(args.b),
+            "a_length": result.a_length,
+            "b_length": result.b_length,
+            "common_prefix_length": result.common_prefix_length,
+            "identical": result.identical,
+            "first_divergence_sequence": result.first_divergence_sequence,
+            "deltas": [
+                {
+                    "sequence": d.sequence,
+                    "kind": d.kind,
+                    "a": d.a_event_type,
+                    "b": d.b_event_type,
+                }
+                for d in result.deltas[:25]
+            ],
+            "deltas_truncated_at": 25 if len(result.deltas) > 25 else None,
+            "html_path": args.html,
+        }
+    )
+    return 0 if result.identical else 1
+
+
 def cmd_web(args: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -423,6 +460,19 @@ def build_parser() -> argparse.ArgumentParser:
     audit_html.add_argument("input")
     audit_html.add_argument("output")
     audit_html.set_defaults(func=cmd_audit_html)
+
+    audit_diff = audit_sub.add_parser(
+        "diff",
+        help="compare two audit logs by (sequence, event_type, payload)",
+    )
+    audit_diff.add_argument("a")
+    audit_diff.add_argument("b")
+    audit_diff.add_argument(
+        "--html",
+        default=None,
+        help="optional path to also write an HTML diff page",
+    )
+    audit_diff.set_defaults(func=cmd_audit_diff)
 
     play = sub.add_parser(
         "play",

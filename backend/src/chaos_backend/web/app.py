@@ -25,7 +25,13 @@ from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from chaos_backend import __version__
-from chaos_backend.audit import AuditLogReader, AuditLogVerifier, render_html_from_path
+from chaos_backend.audit import (
+    AuditLogReader,
+    AuditLogVerifier,
+    compare_log_paths,
+    render_diff_html,
+    render_html_from_path,
+)
 from chaos_backend.simulation.scenario_runner import run as run_scenario
 from chaos_backend.simulation.scenario_runner import stream_scenario
 from chaos_backend.simulation.scenarios import ScenarioKind, build
@@ -408,6 +414,22 @@ def build_app(
         if not Path(record.log_path).exists():
             raise HTTPException(status_code=410, detail="log file no longer on disk")
         return HTMLResponse(content=render_html_from_path(record.log_path))
+
+    @application.get("/engagements/{a_id}/diff/{b_id}", response_class=HTMLResponse)
+    def engagement_diff(a_id: str, b_id: str) -> HTMLResponse:
+        record_a = repo.get(a_id)
+        record_b = repo.get(b_id)
+        if record_a is None or record_b is None:
+            raise HTTPException(status_code=404, detail="engagement not found")
+        if not Path(record_a.log_path).exists() or not Path(record_b.log_path).exists():
+            raise HTTPException(status_code=410, detail="log file no longer on disk")
+        result = compare_log_paths(
+            record_a.log_path,
+            record_b.log_path,
+            a_label=f"{record_a.id} · {record_a.scenario}#{record_a.seed}",
+            b_label=f"{record_b.id} · {record_b.scenario}#{record_b.seed}",
+        )
+        return HTMLResponse(content=render_diff_html(result))
 
     @application.exception_handler(404)
     def not_found(_request: Any, _exc: Any) -> JSONResponse:

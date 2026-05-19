@@ -155,3 +155,37 @@ def test_landing_shows_recent_engagements_table_after_run(
     body = isolated_client.get("/").text
     assert "RECENT ENGAGEMENTS" in body
     assert "peer_salvo" in body
+
+
+def test_engagement_diff_identical_runs(isolated_client: TestClient) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "42"})
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "42"})
+
+    records = isolated_client.get("/engagements").json()["engagements"]
+    a_id, b_id = records[0]["id"], records[1]["id"]
+
+    response = isolated_client.get(f"/engagements/{a_id}/diff/{b_id}")
+    assert response.status_code == 200
+    assert "IDENTICAL" in response.text
+
+
+def test_engagement_diff_divergent_seeds(isolated_client: TestClient) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "1"})
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "2"})
+
+    records = isolated_client.get("/engagements").json()["engagements"]
+    a_id, b_id = records[0]["id"], records[1]["id"]
+
+    response = isolated_client.get(f"/engagements/{a_id}/diff/{b_id}")
+    assert response.status_code == 200
+    assert "DIVERGENT" in response.text
+
+
+def test_engagement_diff_404_when_either_missing(isolated_client: TestClient) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "0"})
+    real_id = isolated_client.get("/engagements").json()["engagements"][0]["id"]
+
+    a_missing = isolated_client.get(f"/engagements/eng_nope/diff/{real_id}")
+    b_missing = isolated_client.get(f"/engagements/{real_id}/diff/eng_nope")
+    assert a_missing.status_code == 404
+    assert b_missing.status_code == 404
