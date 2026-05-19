@@ -825,24 +825,25 @@ class Projector {
 
 // ═════════════════════════════════════════════════════════════════════
 //   SCENE DEFINITION
-//   Defender batteries are spread on a 1900 m circle so they read as
-//   four distinct icons even at 14 km range — earlier 360 m spacing
-//   put them inside one screen pixel of separation.
+//   Defender batteries are spread on a 3000 m circle so they remain
+//   four distinct icons at any viewport — earlier 1900 m spacing still
+//   visually collapsed below ~1200 px wide.
 // ═════════════════════════════════════════════════════════════════════
-const RING_RADII_M = [2_500, 5_000, 7_500, 10_000, 12_500];
+const RING_RADII_M = [3_000, 5_500, 8_000, 10_500, 13_000];
 
 function hexPosition(thetaDeg, radius) {
     const t = thetaDeg * Math.PI / 180;
     return [Math.sin(t) * radius, 0, Math.cos(t) * radius];
 }
 
-// 4 batteries at the cardinal points of a 1900-m circle around the
+// 4 batteries at the cardinal points of a 3000-m circle around the
 // defended cell, separated by 90°. Centre command bunker at origin.
+const DEFENDER_RADIUS_M = 3_000;
 const DEFENDER_BATTERIES = [
-    { id: 'NGI',   pos: hexPosition(  0, 1_900), color: [0.55, 0.85, 1.00] },
-    { id: 'SM-3',  pos: hexPosition( 90, 1_900), color: [0.55, 0.95, 0.78] },
-    { id: 'PAC-3', pos: hexPosition(180, 1_900), color: [0.72, 0.95, 0.55] },
-    { id: 'HEL',   pos: hexPosition(270, 1_900), color: [1.00, 0.88, 0.55] },
+    { id: 'NGI',   pos: hexPosition(  0, DEFENDER_RADIUS_M), color: [0.55, 0.85, 1.00] },
+    { id: 'SM-3',  pos: hexPosition( 90, DEFENDER_RADIUS_M), color: [0.55, 0.95, 0.78] },
+    { id: 'PAC-3', pos: hexPosition(180, DEFENDER_RADIUS_M), color: [0.72, 0.95, 0.55] },
+    { id: 'HEL',   pos: hexPosition(270, DEFENDER_RADIUS_M), color: [1.00, 0.88, 0.55] },
 ];
 
 const COMPASS = [
@@ -852,26 +853,29 @@ const COMPASS = [
     { id: 'W', pos: [-13_200, 0,      0] },
 ];
 
-// Defended assets — small hex markers along the inner ring so they
-// frame the central battery cluster rather than crowd it.
+// Defended assets — small hex markers tucked inside the defender ring.
 const ASSETS = [
-    { id: 'COMMAND', pos: hexPosition(  45, 1_100) },
-    { id: 'PORT',    pos: hexPosition( 135, 1_100) },
-    { id: 'GRID',    pos: hexPosition( 225, 1_100) },
-    { id: 'NODE-7',  pos: hexPosition( 315, 1_100) },
+    { id: 'COMMAND', pos: hexPosition(  45, 1_400) },
+    { id: 'PORT',    pos: hexPosition( 135, 1_400) },
+    { id: 'GRID',    pos: hexPosition( 225, 1_400) },
+    { id: 'NODE-7',  pos: hexPosition( 315, 1_400) },
 ];
 
-// Three threats inbound from different bearings so the picture reads
-// as a coordinated multi-axis attack instead of a parallel stream.
+// Three threats inbound from different bearings. Each track has an
+// explicit `launchAt` (seconds into the demo cycle) and a `flightTime`.
+// Outside the [launchAt, launchAt + flightTime] window the track is
+// "off-screen" — pre-launch or post-splash — and won't be rendered.
+// This fixes the bug where reloading mid-cycle showed threats already
+// mid-air with no acquisition history.
 const TRACKS = [
     {
         id: 'HGV-WRAITH-01',
         kind: 'HGV',
-        launch:   [-12_400,   300,   4_200],
-        apogee:   [ -1_400, 7_800,   1_700],
+        launch:   [-13_200,   280,   4_400],
+        apogee:   [ -1_400, 7_200,   1_700],
         terminal: [    900,   350,    -700],
-        cycle: 16,
-        phase: 0.00,
+        launchAt: 0.4,
+        flightTime: 8.5,
         color: [1.00, 0.66, 0.38],
         machBase: 9.4,
         priority: 1,
@@ -879,11 +883,11 @@ const TRACKS = [
     {
         id: 'HGV-WRAITH-02',
         kind: 'HGV',
-        launch:   [ -8_600,   380, -10_400],
+        launch:   [ -9_200,   360, -11_200],
         apogee:   [ -1_000, 6_400,  -2_800],
         terminal: [    600,   360,   1_300],
-        cycle: 18,
-        phase: 0.34,
+        launchAt: 2.0,
+        flightTime: 9.5,
         color: [1.00, 0.55, 0.20],
         machBase: 8.8,
         priority: 2,
@@ -891,11 +895,11 @@ const TRACKS = [
     {
         id: 'MARV-VIPER-03',
         kind: 'MARV',
-        launch:   [ 11_800,   240,   9_600],
+        launch:   [ 12_400,   220,  10_200],
         apogee:   [  3_400, 4_400,   3_800],
         terminal: [   -800,   320,    -500],
-        cycle: 14,
-        phase: 0.62,
+        launchAt: 4.0,
+        flightTime: 7.0,
         color: [0.95, 0.84, 0.55],
         machBase: 6.8,
         priority: 3,
@@ -906,21 +910,23 @@ const findDefender = (id) => DEFENDER_BATTERIES.find(d => d.id === id);
 const findTrack    = (id) => TRACKS.find(t => t.id === id);
 
 // Per-COA allocation. Map keyed by COA id → list of {defender, target,
-// kind, speed}. Authorization replays the right list.
+// kind, speed}. The `speed` here is the average interceptor speed used
+// for TTI prediction (display only — actual flight uses the boost +
+// cruise + turn-rate physics in tickSalvos).
 const COA_ALLOCATIONS = {
     'COA-A': [
-        { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 5_400 },
-        { defender: 'NGI', target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 5_400 },
-        { defender: 'NGI', target: 'MARV-VIPER-03', kind: 'KINETIC',  speed: 5_400 },
+        { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 850 },
+        { defender: 'NGI', target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 850 },
+        { defender: 'NGI', target: 'MARV-VIPER-03', kind: 'KINETIC',  speed: 850 },
     ],
     'COA-B': [
-        { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 5_400 },
-        { defender: 'NGI', target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 5_400 },
+        { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 850 },
+        { defender: 'NGI', target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 850 },
         { defender: 'HEL', target: 'MARV-VIPER-03', kind: 'DIRECTED', speed: 2.998e8 },
     ],
     'COA-C': [
-        { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 5_400 },
-        { defender: 'NGI', target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 5_400 },
+        { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 850 },
+        { defender: 'NGI', target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 850 },
     ],
 };
 
@@ -931,18 +937,32 @@ const ENGAGEMENT_ALLOC = COA_ALLOCATIONS['COA-B'];
 
 // ═════════════════════════════════════════════════════════════════════
 //   THREAT MOTION
-//   Track position is the Bezier evaluated at t = (clock + phase) / cycle.
+//   Each track has an explicit launchAt + flightTime measured against
+//   cyclePhase (so it loops with the demo). Outside [launchAt, launchAt
+//   + flightTime] the track is dormant — returns a phase of -1 (pre)
+//   or 2 (post) which trackPos / trackVisible / draw* all check.
 // ═════════════════════════════════════════════════════════════════════
-function trackPhase(tr, tNow) {
-    const total = tr.cycle + 1.6;             // 1.6s post-impact dwell
-    const ps = ((tNow + tr.phase * tr.cycle) % total);
-    return Math.min(1, ps / tr.cycle);
+function trackPhaseAt(tr, t) {
+    const cyc = t % CYCLE;
+    const elapsed = cyc - tr.launchAt;
+    if (elapsed < 0) return -1;
+    if (elapsed > tr.flightTime) return 2;
+    return elapsed / tr.flightTime;
 }
-function trackPos(tr, tNow) {
-    return V3.bezQ(tr.launch, tr.apogee, tr.terminal, trackPhase(tr, tNow));
+function trackPhase(tr) { return trackPhaseAt(tr, clock.now); }
+function trackVisible(tr) {
+    const ph = trackPhase(tr);
+    return ph >= 0 && ph <= 1;
 }
-function trackSpeedMach(tr, tNow) {
-    const t = trackPhase(tr, tNow);
+function trackPosAt(tr, t) {
+    const ph = trackPhaseAt(tr, t);
+    if (ph < 0) return tr.launch;
+    if (ph > 1) return tr.terminal;
+    return V3.bezQ(tr.launch, tr.apogee, tr.terminal, ph);
+}
+function trackPos(tr) { return trackPosAt(tr, clock.now); }
+function trackSpeedMach(tr) {
+    const t = clamp(trackPhase(tr), 0, 1);
     return tr.machBase * (1 - 0.18 * Math.sin(Math.PI * t)) * (0.95 + 0.10 * t);
 }
 
@@ -1000,9 +1020,14 @@ class Clock {
 }
 const clock = new Clock();
 
-// Demo cycle — Mode A → B at 5s, propose COAs at 8s, expire at 19s,
-// authorize at 14s, restore A at 23s, wrap at 28s.
-const CYCLE = 28;
+// Demo cycle — tightened so AUTO actually exercises a wave every ~20s
+// instead of every 28s, and the operator sees COA cards within ~1.2s
+// of page load. Threats spawn at their declared launchAt times.
+const CYCLE = 20;
+const COA_OPEN_T   = 1.2;
+const COA_CLOSE_T  = 14.0;
+const MODE_B_OPEN  = 0.8;
+const MODE_B_CLOSE = 16.0;
 function cyclePhase() { return clock.now % CYCLE; }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -1344,7 +1369,9 @@ function drawSensorCoverage() {
 // ═════════════════════════════════════════════════════════════════════
 function drawImpactPredictions() {
     for (const tr of TRACKS) {
-        const t = trackPhase(tr, clock.now);
+        if (!trackVisible(tr)) continue;
+        if (engagement.killedTracks.has(tr.id)) continue;
+        const t = trackPhase(tr);
         const impact = proj.project([tr.terminal[0], 0, tr.terminal[2]]);
         if (!impact) continue;
         const urgency = Math.pow(t, 1.8);
@@ -1375,7 +1402,13 @@ const trails = TRACKS.map(() => []);
 
 function pushTrailSamples() {
     for (let i = 0; i < TRACKS.length; i++) {
-        trails[i].push(trackPos(TRACKS[i], clock.now));
+        // Reset the trail when the track is dormant — keeps the
+        // streak from "teleporting" between cycles.
+        if (!trackVisible(TRACKS[i])) {
+            if (trails[i].length) trails[i].length = 0;
+            continue;
+        }
+        trails[i].push(trackPos(TRACKS[i]));
         if (trails[i].length > TRAIL_SAMPLES) trails[i].shift();
     }
 }
@@ -1385,6 +1418,7 @@ function drawTrails() {
     for (let ti = 0; ti < TRACKS.length; ti++) {
         const tr = TRACKS[ti];
         if (engagement.killedTracks.has(tr.id)) continue;
+        if (!trackVisible(tr)) continue;
         const s = trails[ti];
         const n = s.length;
         if (n < 4) continue;
@@ -1431,7 +1465,7 @@ function predictIntercept(track, defender, interceptorV) {
     // Converges quickly for the typical 1-15s intercept window.
     let tti = 6.0;
     for (let i = 0; i < 6; i++) {
-        const target = trackPos(track, clock.now + tti);
+        const target = trackPosAt(track, clock.now + tti);
         const d = Math.hypot(
             target[0] - defender.pos[0],
             target[1] - defender.pos[1],
@@ -1439,7 +1473,7 @@ function predictIntercept(track, defender, interceptorV) {
         );
         tti = d / interceptorV;
     }
-    return { tti, point: trackPos(track, clock.now + tti) };
+    return { tti, point: trackPosAt(track, clock.now + tti) };
 }
 
 function drawEngagementAllocations() {
@@ -1506,19 +1540,49 @@ function launchSalvo(coaId, alloc, launchOffsetSec) {
         defenderId: alloc.defender,
         targetId: alloc.target,
         kind: alloc.kind,
-        // Kinetic interceptors visualised at a survey-able 1600 m/s on
-        // the canvas (real interceptor speeds compress engagements into
-        // sub-frame intervals); directed-energy is treated as
-        // effectively instantaneous (0.4 s dwell to a kill).
-        speedMps: alloc.kind === 'DIRECTED' ? 0 : 1_600,
-        directedDwell: alloc.kind === 'DIRECTED' ? 0.4 : 0,
+        // Boost + cruise. Boost is mostly-vertical for `boostDuration`
+        // seconds, then the interceptor pitches over toward the target
+        // with a finite turn rate. Real Mach-15 missiles aren't visible
+        // frame-to-frame, so we render a survey-able M2.6 (~900 m/s)
+        // average — large enough to see the arc, small enough to read
+        // the chase.
+        cruiseSpeedMps:  alloc.kind === 'DIRECTED' ? 0 : 1_100,
+        boostSpeedMps:   alloc.kind === 'DIRECTED' ? 0 : 220,
+        accelMps2:       alloc.kind === 'DIRECTED' ? 0 : 1_400,
+        turnRateRadSec:  alloc.kind === 'DIRECTED' ? 0 : 2.4,
+        boostDuration:   alloc.kind === 'DIRECTED' ? 0 : 0.55,
+        directedDwell:   alloc.kind === 'DIRECTED' ? 0.4 : 0,
         launchedAt: clock.now + launchOffsetSec,
         position: [def.pos[0], 380, def.pos[2]],
+        velocity: [0, 0, 0],
+        speed: 0,
         state: 'queued',           // queued → inflight → splash → done
         impactPoint: null,
         impactAt: null,
         color: alloc.kind === 'DIRECTED' ? [1.00, 0.88, 0.55] : [0.55, 0.85, 1.00],
+        trail: [],                 // recent worldspace positions for plotting
     });
+}
+
+// Smoothly rotate vector `v` toward `target` direction at angular
+// speed `omega` (rad/s). Returns a new unit vector — caller scales
+// to the desired speed.
+function turnToward(velUnit, targetDir, omega, dt) {
+    const dot = clamp(V3.dot(velUnit, targetDir), -1, 1);
+    const angle = Math.acos(dot);
+    if (angle < 1e-4) return targetDir.slice();
+    const maxStep = omega * dt;
+    if (maxStep >= angle) return targetDir.slice();
+    // Slerp between velUnit and targetDir by fraction `maxStep / angle`.
+    const f = maxStep / angle;
+    const sinA = Math.sin(angle);
+    const a = Math.sin((1 - f) * angle) / sinA;
+    const b = Math.sin(f * angle) / sinA;
+    return [
+        velUnit[0] * a + targetDir[0] * b,
+        velUnit[1] * a + targetDir[1] * b,
+        velUnit[2] * a + targetDir[2] * b,
+    ];
 }
 
 function tickSalvos(dt) {
@@ -1530,10 +1594,9 @@ function tickSalvos(dt) {
             s.state = 'done';
             continue;
         }
-        const targetPos = trackPos(tr, clock.now);
+        const targetPos = trackPos(tr);
+
         if (s.kind === 'DIRECTED') {
-            // Beam stays on the threat for `directedDwell` seconds, then
-            // kills. The "position" lerps toward the target for visual.
             s.position = V3.lerp(s.position, targetPos, 0.5);
             if (s.state === 'queued') s.state = 'inflight';
             if (clock.now - s.launchedAt >= s.directedDwell) {
@@ -1544,20 +1607,59 @@ function tickSalvos(dt) {
             }
             continue;
         }
-        // Kinetic: proportional pursuit toward the threat.
+
+        // ── Kinetic interceptor: boost + pitchover + finite turn rate ──
+        const flightT = clock.now - s.launchedAt;
         const toTarget = V3.sub(targetPos, s.position);
-        const dist = V3.len(toTarget);
-        const stepLen = s.speedMps * dt;
-        if (dist < Math.max(120, stepLen * 1.2)) {
+        const distance = V3.len(toTarget);
+        const targetDir = V3.scale(toTarget, 1 / Math.max(1, distance));
+
+        // Desired direction: during boost, blend from straight-up to
+        // target. After boost, full pursuit. The blend gives the
+        // characteristic vertical-launch-then-pitch-over arc.
+        let desiredDir;
+        if (flightT < s.boostDuration) {
+            const blend = Math.pow(flightT / s.boostDuration, 1.4);  // ease-in
+            const up = [0, 1, 0];
+            const m = [
+                up[0] * (1 - blend) + targetDir[0] * blend,
+                up[1] * (1 - blend) + targetDir[1] * blend,
+                up[2] * (1 - blend) + targetDir[2] * blend,
+            ];
+            desiredDir = V3.norm(m);
+        } else {
+            desiredDir = targetDir;
+        }
+
+        // Speed: accelerate from boost speed up to cruise speed.
+        const targetSpeed = (flightT < s.boostDuration) ? s.boostSpeedMps : s.cruiseSpeedMps;
+        s.speed = Math.min(targetSpeed, (s.speed || s.boostSpeedMps) + s.accelMps2 * dt);
+
+        // Velocity direction turns toward desired direction at a
+        // limited angular rate so the missile can't snap-track.
+        const currentDir = (s.speed > 0 && V3.len(s.velocity) > 0)
+            ? V3.norm(s.velocity)
+            : [0, 1, 0];
+        const newDir = turnToward(currentDir, desiredDir, s.turnRateRadSec, dt);
+        s.velocity = V3.scale(newDir, s.speed);
+
+        const stepLen = s.speed * dt;
+        if (distance < Math.max(140, stepLen * 1.4)) {
             // Splash
             s.state = 'splash';
             s.impactPoint = targetPos;
             s.impactAt = clock.now;
             killTrack(tr.id, targetPos);
         } else {
-            const dir = V3.scale(toTarget, 1 / Math.max(1, dist));
-            s.position = V3.add(s.position, V3.scale(dir, stepLen));
+            s.position = V3.add(s.position, V3.scale(s.velocity, dt));
             if (s.state === 'queued') s.state = 'inflight';
+            // Sample the curving flight path for the trail (~30Hz).
+            const samplePeriod = 1 / 30;
+            if (!s._lastSampled || (clock.now - s._lastSampled) >= samplePeriod) {
+                s.trail.push(s.position.slice());
+                if (s.trail.length > 48) s.trail.shift();
+                s._lastSampled = clock.now;
+            }
         }
     }
     // Garbage-collect old splashes
@@ -1600,15 +1702,35 @@ function drawSalvos() {
             ctx.fill();
             continue;
         }
-        // Kinetic: dot + smoke trail back toward defender
+        // Kinetic: hot dot + curving smoke trail from the actual path.
         if (!projP) continue;
-        if (defScreen) {
-            const grad = ctx.createLinearGradient(defScreen.sx, defScreen.sy, projP.sx, projP.sy);
-            grad.addColorStop(0.00, rgbStr(s.color, 0.00));
-            grad.addColorStop(0.80, rgbStr(s.color, 0.45));
-            grad.addColorStop(1.00, rgbStr(s.color, 0.95));
-            ctx.strokeStyle = grad;
-            ctx.lineWidth = 1.6;
+        if (s.trail && s.trail.length >= 2) {
+            // Draw the trail as a polyline whose alpha and width grow
+            // toward the leading dot. Includes the defender launch
+            // point as the oldest sample.
+            const pts = s.trail.slice();
+            if (defScreen && def) pts.unshift([def.pos[0], 380, def.pos[2]]);
+            pts.push(s.position);
+            const n = pts.length;
+            for (let i = 1; i < n; i++) {
+                const a = proj.project(pts[i - 1]);
+                const b = proj.project(pts[i]);
+                if (!a || !b) continue;
+                const age = i / n;
+                const width = 0.8 + age * 2.0;
+                const alpha = Math.pow(age, 1.4);
+                ctx.strokeStyle = rgbStr(s.color, alpha * 0.95);
+                ctx.lineWidth = width;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(a.sx, a.sy);
+                ctx.lineTo(b.sx, b.sy);
+                ctx.stroke();
+            }
+        } else if (defScreen) {
+            // Pre-trail: render a thin connector from defender to head.
+            ctx.strokeStyle = rgbStr(s.color, 0.55);
+            ctx.lineWidth = 1.2;
             ctx.beginPath();
             ctx.moveTo(defScreen.sx, defScreen.sy);
             ctx.lineTo(projP.sx, projP.sy);
@@ -1695,7 +1817,8 @@ function drawCornerBrackets(cx, cy, s, len, col, width) {
 function drawTracks() {
     for (const tr of TRACKS) {
         if (engagement.killedTracks.has(tr.id)) continue;
-        const p = trackPos(tr, clock.now);
+        if (!trackVisible(tr)) continue;
+        const p = trackPos(tr);
         const sp = proj.project(p);
         if (!sp) continue;
         const r = Math.max(2.5, 220 / Math.max(0.5, sp.depth / 800));
@@ -1784,7 +1907,9 @@ function drawRadarSweep() {
     // blips: project each track's ground position into the radar's
     // top-down frame, scaled so 12.5km maps to R.
     for (const tr of TRACKS) {
-        const p = trackPos(tr, clock.now);
+        if (!trackVisible(tr)) continue;
+        if (engagement.killedTracks.has(tr.id)) continue;
+        const p = trackPos(tr);
         const range = Math.hypot(p[0], p[2]);
         if (range > 13_000) continue;
         const bearing = Math.atan2(p[0], p[2]);   // 0 = +Z (north)
@@ -1889,10 +2014,11 @@ function positionCallouts() {
             container.appendChild(node);
         }
         if (engagement.killedTracks.has(tr.id)) { node.style.display = 'none'; continue; }
-        const p = trackPos(tr, clock.now);
+        if (!trackVisible(tr)) { node.style.display = 'none'; continue; }
+        const p = trackPos(tr);
         const sp = proj.project(p);
         if (!sp) { node.style.display = 'none'; continue; }
-        const speed = trackSpeedMach(tr, clock.now);
+        const speed = trackSpeedMach(tr);
         const altKm = (p[1] / 1000).toFixed(1);
         const rngKm = (Math.hypot(p[0], p[2]) / 1000).toFixed(1);
         node.style.display = '';
@@ -1934,15 +2060,14 @@ const COAS = {
     },
 };
 
-// COA appearance is shifted earlier in the cycle so they reveal ~1s
-// after the mode trips, not 4s after — feels much snappier.
+// COAs reveal as soon as the mode trips (now ~1.2s after a fresh page
+// load) so the operator — or AUTO — can act inside the threat window.
 function activeCOAs(t) {
     if (engagement.authorizedCOA) {
-        // Show only the authorized card after authorize is clicked.
         return [{ ...COAS[engagement.authorizedCOA], remaining: 0, authorized: true }];
     }
-    if (t < 6 || t >= 21) return [];
-    const offset = t - 6;
+    if (t < COA_OPEN_T || t >= COA_CLOSE_T) return [];
+    const offset = t - COA_OPEN_T;
     return [
         { ...COAS['COA-B'], remaining: clamp(COAS['COA-B'].countdownSec - offset, 0, COAS['COA-B'].countdownSec) },
         { ...COAS['COA-A'], remaining: clamp(COAS['COA-A'].countdownSec - offset, 0, COAS['COA-A'].countdownSec) },
@@ -1950,7 +2075,7 @@ function activeCOAs(t) {
     ].filter(c => !engagement.objected.has(c.id));
 }
 function modeAt(t) {
-    if (t >= 5 && t < 24) return { letter: 'B', name: 'SENSOR DEGRADED', color: 'amber' };
+    if (t >= MODE_B_OPEN && t < MODE_B_CLOSE) return { letter: 'B', name: 'SENSOR DEGRADED', color: 'amber' };
     return { letter: 'A', name: 'NOMINAL', color: 'gold' };
 }
 
@@ -2105,10 +2230,10 @@ function tickAutoEngage() {
     if (engagement.authorizedCOA) return;
     if (engagement.autoEngagedThisCycle) return;
     const t = cyclePhase();
-    if (t < 6 || t >= 21) return;
-    // Brief delay so the operator sees the COA appear before commit —
-    // mirrors the "200ms reveal + 500ms reflex" handoff norm.
-    if (t < 6.7) return;
+    if (t < COA_OPEN_T || t >= COA_CLOSE_T) return;
+    // ~300 ms reveal delay so the operator sees the recommendation
+    // appear before the system commits.
+    if (t < COA_OPEN_T + 0.3) return;
     const recommended = Object.values(COAS).find(c => c.rec);
     if (!recommended) return;
     if (engagement.objected.has(recommended.id)) return;
