@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from chaos_backend.audit import AuditLogReader, AuditLogVerifier, AuditLogWriter
 from chaos_backend.services.adversary_model import AdversaryModelService
 from chaos_backend.services.coa_generator import CourseOfActionService
 from chaos_backend.services.discrimination import DiscriminationService
@@ -257,9 +258,91 @@ def cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit_verify(args: argparse.Namespace) -> int:
+    entries = AuditLogReader.load(args.path)
+    result = AuditLogVerifier.verify(entries)
+    _emit(
+        {
+            "path": args.path,
+            "entry_count": len(entries),
+            "valid": result.valid,
+            "failed_at_sequence": result.failed_at_sequence,
+            "failure_reason": result.failure_reason,
+        }
+    )
+    return 0 if result.valid else 1
+
+
+def cmd_audit_query(args: argparse.Namespace) -> int:
+    entries = AuditLogReader.load(args.path)
+    filtered = (
+        entries
+        if args.event_type is None
+        else [e for e in entries if e.event_type == args.event_type]
+    )
+    _emit(
+        {
+            "path": args.path,
+            "total_entries": len(entries),
+            "filter": args.event_type,
+            "matches": len(filtered),
+            "entries": [
+                {
+                    "sequence": e.sequence,
+                    "utc_iso": e.utc_iso,
+                    "event_type": e.event_type,
+                    "payload": json.loads(e.payload_json),
+                }
+                for e in filtered
+            ],
+        }
+    )
+    return 0
+
+
+def cmd_audit_demo(args: argparse.Namespace) -> int:
+    path = args.path
+    with AuditLogWriter(path) as writer:
+        writer.append("engagement_begin", {"scenario": "peer_salvo"})
+        writer.append("mode_changed", {"previous": "Nominal", "current": "SensorDegraded"})
+        writer.append("coa_proposed", {"id": "COA-B", "recommended": True})
+        writer.append("coa_authorized", {"id": "COA-B", "source": "Operator"})
+        writer.append("engagement_end", {})
+
+    entries = AuditLogReader.load(path)
+    result = AuditLogVerifier.verify(entries)
+    _emit(
+        {
+            "wrote": str(path),
+            "entries": len(entries),
+            "verified": result.valid,
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chaos-backend-cli")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    audit = sub.add_parser("audit", help="audit log read/verify/demo utilities")
+    audit_sub = audit.add_subparsers(dest="audit_command", required=True)
+
+    audit_verify = audit_sub.add_parser("verify", help="verify a JSONL audit log's hash chain")
+    audit_verify.add_argument("path")
+    audit_verify.set_defaults(func=cmd_audit_verify)
+
+    audit_query = audit_sub.add_parser("query", help="filter an audit log by event type")
+    audit_query.add_argument("path")
+    audit_query.add_argument("--event-type", default=None)
+    audit_query.set_defaults(func=cmd_audit_query)
+
+    audit_demo = audit_sub.add_parser(
+        "demo",
+        help="write a small sample audit log and verify it",
+    )
+    audit_demo.add_argument("path")
+    audit_demo.set_defaults(func=cmd_audit_demo)
 
     d = sub.add_parser(
         "demo",
