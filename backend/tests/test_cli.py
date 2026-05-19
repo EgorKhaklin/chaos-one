@@ -120,3 +120,37 @@ def test_emit_writes_newline_terminated_json() -> None:
     output = buffer.getvalue()
     assert output.endswith("\n")
     assert '"k": "v"' in output
+
+
+def test_json_default_serializes_ndarrays() -> None:
+    import numpy as np
+
+    from chaos_backend.cli import _json_default
+
+    result = _json_default(np.array([1.0, 2.0, 3.0]))
+    assert result == [1.0, 2.0, 3.0]
+
+
+def test_cmd_scenario_handler_rejects_invalid_kind_directly() -> None:
+    import argparse
+
+    from chaos_backend.cli import cmd_scenario
+
+    namespace = argparse.Namespace(kind="not_a_real_kind", seed=0)
+    code = cmd_scenario(namespace)
+    assert code == 2
+
+
+def test_cmd_demo_handler_rejects_invalid_kind_directly() -> None:
+    import argparse
+
+    from chaos_backend.cli import cmd_demo
+
+    namespace = argparse.Namespace(
+        scenario="not_a_real_kind",
+        seed=0,
+        tracks=1,
+        envelope="ROE-2",
+    )
+    code = cmd_demo(namespace)
+    assert code == 2
