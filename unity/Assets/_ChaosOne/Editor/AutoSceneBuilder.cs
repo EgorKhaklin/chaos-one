@@ -55,7 +55,8 @@ namespace ChaosOne.EditorScripts
             BuildCinemachineDirector(vcam);
             BuildChaosOneRoot();
 
-            BuildDemoTrack();
+            BuildGround();
+            BuildDemoTracks();
 
             var panelSettings = EnsurePanelSettings();
             BuildUIDocument<ModeHUD>("UI_ModeHUD", "Assets/_ChaosOne/UI/ModeHUD.uxml", panelSettings);
@@ -136,12 +137,56 @@ namespace ChaosOne.EditorScripts
             go.AddComponent<PerfOverlay>();
         }
 
-        private static void BuildDemoTrack()
+        private static void BuildGround()
         {
-            // Sphere primitive sized for the scene scale. The trigger
-            // collider stays so ThreatTrackSelector can raycast onto it.
+            // Wide flat plane far below the trajectory band so the scene
+            // has spatial reference. Dark navy material so it reads as
+            // sea/ground without competing with the threats.
+            var go = GameObject.CreatePrimitive(PrimitiveType.Plane);
+            go.name = "Ground";
+            go.transform.position = new Vector3(0f, -200f, 0f);
+            go.transform.localScale = new Vector3(3000f, 1f, 3000f);
+
+            var renderer = go.GetComponent<MeshRenderer>();
+            if (renderer != null)
+            {
+                var groundMat = new Material(Shader.Find("Universal Render Pipeline/Lit")
+                    ?? Shader.Find("Standard")
+                    ?? Shader.Find("Hidden/InternalErrorShader"));
+                groundMat.color = new Color(0.043f, 0.094f, 0.165f);
+                renderer.sharedMaterial = groundMat;
+                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+        }
+
+        private static readonly (string id, Vector3 launch, Vector3 apogee, Vector3 terminal, float seconds, float pause, Color trail, string ident)[] DemoTracks =
+        {
+            ("HGV-WRAITH-01", new Vector3(-9000f, 200f, 0f), new Vector3(0f, 18000f, 0f), new Vector3(9000f, 400f, 0f), 12f, 1.0f, new Color(1.00f, 0.66f, 0.38f, 1f), "HGV"),
+            ("HGV-WRAITH-02", new Vector3(-7500f, 400f, 1800f), new Vector3(600f, 22000f, 1500f), new Vector3(8200f, 600f, 1100f), 14.5f, 2.5f, new Color(1.00f, 0.55f, 0.20f, 1f), "HGV"),
+            ("MARV-VIPER-03", new Vector3(-6200f, 200f, -1800f), new Vector3(-200f, 14000f, -1200f), new Vector3(7800f, 300f, -1500f), 11f, 4.2f, new Color(0.95f, 0.84f, 0.55f, 1f), "MARV"),
+        };
+
+        private static void BuildDemoTracks()
+        {
+            var archetype = EnsureDemoArchetype();
+            foreach (var def in DemoTracks)
+            {
+                BuildOneDemoTrack(archetype, def.id, def.launch, def.apogee, def.terminal, def.seconds, def.pause, def.trail);
+            }
+        }
+
+        private static void BuildOneDemoTrack(
+            ThreatArchetype archetype,
+            string trackId,
+            Vector3 launch,
+            Vector3 apogee,
+            Vector3 terminal,
+            float traverseSeconds,
+            float restartPause,
+            Color trailColor)
+        {
             var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            go.name = "DemoTrack";
+            go.name = trackId;
             go.transform.localScale = new Vector3(160f, 160f, 160f);
 
             var col = go.GetComponent<SphereCollider>();
@@ -155,7 +200,7 @@ namespace ChaosOne.EditorScripts
 
             var trail = go.AddComponent<TrailRenderer>();
             trail.time = 4f;
-            trail.startWidth = 90f;
+            trail.startWidth = 110f;
             trail.endWidth = 5f;
             trail.minVertexDistance = 8f;
             trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -166,12 +211,43 @@ namespace ChaosOne.EditorScripts
             {
                 trail.sharedMaterial = defaultLineMaterial;
             }
+            var trailGradient = new Gradient();
+            trailGradient.SetKeys(
+                new[]
+                {
+                    new GradientColorKey(trailColor, 0f),
+                    new GradientColorKey(trailColor * 0.4f, 1f),
+                },
+                new[]
+                {
+                    new GradientAlphaKey(0.95f, 0f),
+                    new GradientAlphaKey(0.0f, 1f),
+                });
+            trail.colorGradient = trailGradient;
 
-            var archetype = EnsureDemoArchetype();
             var track = go.AddComponent<ThreatTrack>();
-            track.Configure(archetype, "HGV-WRAITH-01", TrackState.ConfidentRV);
+            track.Configure(archetype, trackId, TrackState.ConfidentRV);
 
-            go.AddComponent<DemoTrackMover>();
+            var mover = go.AddComponent<DemoTrackMover>();
+            var so = new SerializedObject(mover);
+            AssignVector(so, "launchPoint", launch);
+            AssignVector(so, "apogeePoint", apogee);
+            AssignVector(so, "terminalPoint", terminal);
+            AssignFloat(so, "traverseSeconds", traverseSeconds);
+            AssignFloat(so, "restartPauseSeconds", restartPause);
+            so.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static void AssignVector(SerializedObject so, string name, Vector3 value)
+        {
+            var prop = so.FindProperty(name);
+            if (prop != null) prop.vector3Value = value;
+        }
+
+        private static void AssignFloat(SerializedObject so, string name, float value)
+        {
+            var prop = so.FindProperty(name);
+            if (prop != null) prop.floatValue = value;
         }
 
         private const string DemoArchetypePath = "Assets/_ChaosOne/Data/HGV_Demo.asset";

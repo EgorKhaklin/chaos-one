@@ -32,6 +32,7 @@ namespace ChaosOne.UI
         private void OnEnable()
         {
             var document = GetComponent<UIDocument>();
+            UIDocumentLayout.FillPanel(document);
             var rv = document.rootVisualElement;
             if (rv == null) { enabled = false; return; }
 

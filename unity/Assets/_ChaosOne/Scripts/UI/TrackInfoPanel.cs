@@ -24,6 +24,7 @@ namespace ChaosOne.UI
         private void OnEnable()
         {
             var document = GetComponent<UIDocument>();
+            UIDocumentLayout.FillPanel(document);
             var rootDocument = document.rootVisualElement;
             if (rootDocument == null)
             {
