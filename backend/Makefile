@@ -3,17 +3,20 @@ VENV   ?= .venv
 PIP    := $(VENV)/bin/pip
 PY     := $(VENV)/bin/python
 
-.PHONY: help venv install protos test lint type server clean
+.PHONY: help venv install protos test lint type server demo bench ci all clean
 
 help:
 	@echo "Chaos One backend targets:"
-	@echo "  make venv      create local virtualenv"
-	@echo "  make install   install package with dev extras"
+	@echo "  make install   create venv and install package with dev extras"
 	@echo "  make protos    compile chaos_one.proto into gRPC stubs"
-	@echo "  make test      run pytest"
 	@echo "  make lint      ruff check + format check"
 	@echo "  make type      mypy strict"
-	@echo "  make server    run gRPC server on 127.0.0.1:50051"
+	@echo "  make test      pytest with coverage"
+	@echo "  make ci        run the same gates GitHub Actions runs"
+	@echo "  make bench     run the micro-benchmark harness"
+	@echo "  make demo      run chaos-backend-cli demo end-to-end"
+	@echo "  make server    run the gRPC server on 127.0.0.1:50051"
+	@echo "  make all       install + protos + ci"
 	@echo "  make clean     remove venv and generated stubs"
 
 venv:
@@ -37,11 +40,17 @@ test:
 	$(VENV)/bin/pytest -q
 
 lint:
-	$(VENV)/bin/ruff check src tests
-	$(VENV)/bin/ruff format --check src tests
+	$(VENV)/bin/ruff check src tests benchmarks
+	$(VENV)/bin/ruff format --check src tests benchmarks
 
 type:
 	$(VENV)/bin/mypy src
+
+ci: lint type test
+	@echo "ci: green"
+
+all: install protos ci
+	@echo "all: ready"
 
 server:
 	$(VENV)/bin/chaos-backend
