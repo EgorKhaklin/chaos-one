@@ -32,6 +32,7 @@ from chaos_backend.services.coa_generator import CourseOfActionService
 from chaos_backend.services.discrimination import DiscriminationService
 from chaos_backend.simulation import scenarios
 from chaos_backend.simulation.kinematics import ThreatState, trajectory
+from chaos_backend.simulation.scenario_runner import run as run_scenario
 
 
 def _json_default(obj: Any) -> Any:
@@ -343,6 +344,35 @@ def cmd_audit_html(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_play(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    try:
+        kind = scenarios.ScenarioKind(args.scenario)
+    except ValueError:
+        print(f"unknown scenario kind: {args.scenario}", file=sys.stderr)
+        return 2
+
+    scenario = scenarios.build(kind, seed=args.seed)
+    result = run_scenario(scenario, log_path=args.output, realtime=False)
+
+    response: dict[str, object] = {
+        "scenario": result.scenario_kind,
+        "seed": result.seed,
+        "events_emitted": result.events_emitted,
+        "log_path": str(result.log_path),
+    }
+
+    if args.html:
+        html_path = Path(args.html)
+        html_path.parent.mkdir(parents=True, exist_ok=True)
+        html_path.write_text(render_html_from_path(result.log_path), encoding="utf-8")
+        response["html_path"] = str(html_path)
+
+    _emit(response)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chaos-backend-cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -373,6 +403,19 @@ def build_parser() -> argparse.ArgumentParser:
     audit_html.add_argument("input")
     audit_html.add_argument("output")
     audit_html.set_defaults(func=cmd_audit_html)
+
+    play = sub.add_parser(
+        "play",
+        help="play a scenario into an audit log; optionally render HTML",
+    )
+    play.add_argument(
+        "scenario",
+        choices=[k.value for k in scenarios.ScenarioKind],
+    )
+    play.add_argument("--seed", type=int, default=42)
+    play.add_argument("--output", required=True, help="path to the JSONL audit log to write")
+    play.add_argument("--html", default=None, help="optional HTML output path")
+    play.set_defaults(func=cmd_play)
 
     d = sub.add_parser(
         "demo",
