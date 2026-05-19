@@ -132,17 +132,62 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             pointer-events: auto;
             backdrop-filter: blur(8px);
         }
+        .decisions__head {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 10px;
+        }
         .decisions__title {
             color: var(--gold);
             font-size: 11px;
             letter-spacing: 5px;
             font-weight: 800;
-            margin-bottom: 10px;
         }
         .decisions__rule {
             height: 1px;
             background: var(--rule);
             margin-bottom: 12px;
+        }
+
+        /* AUTO-ENGAGE toggle — switches between operator-in-loop and
+           ROE weapons-free auto-authorization. */
+        .auto-toggle {
+            display: flex; align-items: center; gap: 8px;
+            padding: 3px 8px 3px 10px;
+            background: rgba(232, 226, 208, 0.04);
+            border: 1px solid rgba(232, 226, 208, 0.20);
+            border-radius: 2px;
+            cursor: pointer;
+            user-select: none;
+            color: rgba(232, 226, 208, 0.62);
+            font-size: 9px;
+            letter-spacing: 2.5px;
+            font-weight: 800;
+            transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+        }
+        .auto-toggle:hover {
+            background: rgba(232, 226, 208, 0.08);
+            border-color: rgba(232, 226, 208, 0.30);
+        }
+        .auto-toggle__dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: rgba(232, 226, 208, 0.32);
+            box-shadow: 0 0 0 0 rgba(150, 220, 160, 0);
+            transition: background var(--t-fast), box-shadow 240ms ease-out;
+        }
+        .auto-toggle--on {
+            background: rgba(150, 220, 160, 0.10);
+            border-color: rgba(150, 220, 160, 0.55);
+            color: rgb(150, 220, 160);
+        }
+        .auto-toggle--on .auto-toggle__dot {
+            background: rgb(150, 220, 160);
+            box-shadow: 0 0 0 4px rgba(150, 220, 160, 0.20);
+        }
+        .auto-toggle__hint {
+            color: rgba(232, 226, 208, 0.32);
+            letter-spacing: 1px;
+            font-weight: 700;
+            margin-left: 2px;
         }
         .coa {
             padding: 12px;
@@ -547,10 +592,17 @@ _BATTLESPACE_HTML = r"""<!doctype html>
     <div class="overlay classbar">UNCLASSIFIED // DEMO // FOR EVALUATION</div>
 
     <div class="overlay decisions">
-        <div class="decisions__title">DECISIONS</div>
+        <div class="decisions__head">
+            <span class="decisions__title">DECISIONS</span>
+            <button class="auto-toggle" id="autoToggle" type="button" title="Toggle auto-engage (T)">
+                <span class="auto-toggle__dot"></span>
+                <span class="auto-toggle__label">AUTO</span>
+                <span class="auto-toggle__hint">T</span>
+            </button>
+        </div>
         <div class="decisions__rule"></div>
         <div id="coaStack"></div>
-        <div class="decisions__hint">ENTER AUTHORIZE · O OBJECT · E EXPLAIN</div>
+        <div class="decisions__hint">ENTER AUTHORIZE · O OBJECT · T AUTO-ENGAGE</div>
     </div>
 
     <div class="overlay adv">
@@ -900,6 +952,7 @@ function trackSpeedMach(tr, tNow) {
 const engagement = {
     authorizedCOA: null,          // 'COA-A' | 'COA-B' | 'COA-C' | null
     authorizedAt: null,           // sec on clock
+    authorizedBy: null,           // 'OPERATOR' | 'AUTO'
     objected: new Set(),          // COA ids the operator rejected
     salvos: [],                   // live projectiles
     splashes: [],                 // post-impact rings, faded out by age
@@ -907,6 +960,8 @@ const engagement = {
     pulseUntil: 0,                // gold ring confirmation effect
     notice: null,                 // { text, until }
     pushedLog: new Set(),         // dedupe one-shot log lines
+    autoEngage: false,            // ROE weapons-free auto-authorization
+    autoEngagedThisCycle: false,  // dedupe per cycle
 };
 
 function pushLogOnce(key, line) {
@@ -920,6 +975,7 @@ function pushLogOnce(key, line) {
 function resetEngagement() {
     engagement.authorizedCOA = null;
     engagement.authorizedAt = null;
+    engagement.authorizedBy = null;
     engagement.objected = new Set();
     engagement.salvos = [];
     engagement.splashes = [];
@@ -927,6 +983,7 @@ function resetEngagement() {
     engagement.pulseUntil = 0;
     engagement.notice = null;
     engagement.pushedLog = new Set();
+    engagement.autoEngagedThisCycle = false;
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -1923,11 +1980,17 @@ function renderDecisions(t) {
                 const cls = c.authorized
                     ? 'coa coa--authorized'
                     : 'coa' + (c.rec ? ' coa--rec' : '');
+                const badgeLabel = c.authorized
+                    ? (engagement.authorizedBy === 'AUTO' ? 'AUTO-AUTH' : 'AUTHORIZED')
+                    : (c.rec ? 'RECOMMENDED' : '');
                 const badge = c.authorized
-                    ? '<span class="coa__badge coa__badge--ok">AUTHORIZED</span>'
-                    : (c.rec ? '<span class="coa__badge">RECOMMENDED</span>' : '');
+                    ? `<span class="coa__badge coa__badge--ok">${badgeLabel}</span>`
+                    : (c.rec ? `<span class="coa__badge">${badgeLabel}</span>` : '');
+                const statusText = engagement.authorizedBy === 'AUTO'
+                    ? 'EFFECTORS COMMITTED · AUTO-ENGAGE · IMPACT IN PROGRESS'
+                    : 'EFFECTORS COMMITTED · IMPACT IN PROGRESS';
                 const buttonsHTML = c.authorized
-                    ? '<div class="coa__status">EFFECTORS COMMITTED · IMPACT IN PROGRESS</div>'
+                    ? `<div class="coa__status">${statusText}</div>`
                     : `
                         <div class="coa__btns">
                             <button class="coa__btn coa__btn--p" data-action="auth" data-coa="${c.id}">AUTHORIZE</button>
@@ -1984,15 +2047,18 @@ document.addEventListener('keydown', (e) => {
         if (rec && !engagement.authorizedCOA && !engagement.objected.has(rec.id)) {
             objectCOA(rec.id);
         }
+    } else if (e.key === 't' || e.key === 'T') {
+        setAutoEngage(!engagement.autoEngage);
     }
 });
 
-function authorizeCOA(coaId) {
+function authorizeCOA(coaId, source) {
     if (engagement.authorizedCOA) return;
     const allocs = COA_ALLOCATIONS[coaId];
     if (!allocs) return;
     engagement.authorizedCOA = coaId;
     engagement.authorizedAt = clock.now;
+    engagement.authorizedBy = source || 'OPERATOR';
     engagement.pulseUntil = clock.now + 0.8;
     let stagger = 0;
     for (const a of allocs) {
@@ -2005,10 +2071,49 @@ function authorizeCOA(coaId) {
         kinetic ? `${kinetic}× NGI` : null,
         directed ? `${directed}× HEL` : null,
     ].filter(Boolean).join(' + ');
-    CALM_LIVE.unshift(`COA authorized <em>${coaId}</em> · ${summary} commit · audit logged`);
+    const tag = engagement.authorizedBy === 'AUTO' ? 'AUTO-AUTH' : 'COA authorized';
+    const trail = engagement.authorizedBy === 'AUTO' ? ' · ROE-2 weapons-free' : '';
+    CALM_LIVE.unshift(`${tag} <em>${coaId}</em> · ${summary} commit · audit logged${trail}`);
     if (CALM_LIVE.length > 14) CALM_LIVE.pop();
     lastCalmK = -2;
-    lastCoaSig = '';   // force re-render
+    lastCoaSig = '';
+}
+
+// ─── AUTO-ENGAGE toggle ────────────────────────────────────────────
+function setAutoEngage(on) {
+    if (engagement.autoEngage === on) return;
+    engagement.autoEngage = on;
+    const btn = document.getElementById('autoToggle');
+    if (btn) btn.classList.toggle('auto-toggle--on', on);
+    CALM_LIVE.unshift(
+        on
+            ? `AUTO-ENGAGE armed · ROE-2 weapons-free · operator override available`
+            : `AUTO-ENGAGE disarmed · operator-in-loop restored`
+    );
+    if (CALM_LIVE.length > 14) CALM_LIVE.pop();
+    lastCalmK = -2;
+}
+
+document.getElementById('autoToggle').addEventListener('click', () => {
+    setAutoEngage(!engagement.autoEngage);
+});
+
+// Called from the frame loop. When AUTO is on and a recommended COA
+// is active and we haven't already committed this cycle, authorize.
+function tickAutoEngage() {
+    if (!engagement.autoEngage) return;
+    if (engagement.authorizedCOA) return;
+    if (engagement.autoEngagedThisCycle) return;
+    const t = cyclePhase();
+    if (t < 6 || t >= 21) return;
+    // Brief delay so the operator sees the COA appear before commit —
+    // mirrors the "200ms reveal + 500ms reflex" handoff norm.
+    if (t < 6.7) return;
+    const recommended = Object.values(COAS).find(c => c.rec);
+    if (!recommended) return;
+    if (engagement.objected.has(recommended.id)) return;
+    engagement.autoEngagedThisCycle = true;
+    authorizeCOA(recommended.id, 'AUTO');
 }
 
 function objectCOA(coaId) {
@@ -2018,6 +2123,8 @@ function objectCOA(coaId) {
     if (CALM_LIVE.length > 14) CALM_LIVE.pop();
     lastCalmK = -2;
     lastCoaSig = '';
+    // Operator dissent overrides this cycle's AUTO-AUTH on the same COA.
+    if (engagement.autoEngage) engagement.autoEngagedThisCycle = true;
 }
 
 const HYPS_BASE = [
@@ -2183,6 +2290,7 @@ function frame(ts) {
         clock.tick(FIXED_STEP);
         cam.tick(FIXED_STEP);
         tickSalvos(FIXED_STEP);
+        tickAutoEngage();
         // Auto-reset the engagement when the demo cycle wraps around.
         if (engagement.authorizedCOA && (clock.now - engagement.authorizedAt) > 10) {
             resetEngagement();
