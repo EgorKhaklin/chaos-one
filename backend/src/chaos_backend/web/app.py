@@ -22,7 +22,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 
 from chaos_backend import __version__
 from chaos_backend.audit import (
@@ -176,6 +181,12 @@ _LANDING_HTML = """<!doctype html>
             cursor: pointer;
         }
         .row-button:hover { background: rgba(201, 169, 97, 0.25); }
+        .row-button--danger {
+            background: rgba(220, 80, 80, 0.10);
+            color: rgba(232, 200, 200, 0.92);
+            border-color: rgba(220, 80, 80, 0.45);
+        }
+        .row-button--danger:hover { background: rgba(220, 80, 80, 0.22); }
 
         .meta {
             margin-top: 36px;
@@ -435,6 +446,42 @@ def build_app(
             raise HTTPException(status_code=404, detail="engagement not found")
         return play(scenario=record.scenario, seed=record.seed)
 
+    @application.delete("/engagements/{engagement_id}")
+    def engagement_delete(engagement_id: str, delete_log: bool = True) -> dict[str, Any]:
+        record = repo.get(engagement_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="engagement not found")
+
+        log_existed = False
+        log_removed = False
+        if delete_log:
+            log_path = Path(record.log_path)
+            log_existed = log_path.exists()
+            if log_existed:
+                try:
+                    log_path.unlink()
+                    log_removed = True
+                except OSError:
+                    log_removed = False
+
+        repo.delete(engagement_id)
+        return {
+            "id": engagement_id,
+            "deleted": True,
+            "log_existed": log_existed,
+            "log_removed": log_removed,
+        }
+
+    @application.post("/engagements/{engagement_id}/delete")
+    def engagement_delete_post(engagement_id: str) -> RedirectResponse:
+        """HTML-form-friendly alias for DELETE /engagements/{id}.
+
+        Browsers don't issue DELETE from forms; this POST handler keeps
+        the per-row delete button working without JavaScript. Redirects
+        back to the landing page after the deletion completes."""
+        engagement_delete(engagement_id)
+        return RedirectResponse(url="/", status_code=303)
+
     @application.get("/engagements/{a_id}/diff/{b_id}", response_class=HTMLResponse)
     def engagement_diff(a_id: str, b_id: str) -> HTMLResponse:
         record_a = repo.get(a_id)
@@ -501,6 +548,13 @@ def _render_recent_engagements(repo: EngagementRepository) -> str:
             "</form>"
         )
 
+        delete_cell = (
+            f'<form action="/engagements/{r.id}/delete" method="post" class="row-form" '
+            "onsubmit=\"return confirm('delete this engagement?');\">"
+            '<button type="submit" class="row-button row-button--danger">delete</button>'
+            "</form>"
+        )
+
         rows.append(
             f"""<tr>
                 <td class="seq"><a href="/engagements/{r.id}/audit.html">{r.id}</a></td>
@@ -511,6 +565,7 @@ def _render_recent_engagements(repo: EngagementRepository) -> str:
                 <td class="t">{r.started_at}</td>
                 <td class="t">{diff_cell}</td>
                 <td class="t">{rerun_cell}</td>
+                <td class="t">{delete_cell}</td>
             </tr>"""
         )
 
@@ -528,6 +583,7 @@ def _render_recent_engagements(repo: EngagementRepository) -> str:
                 <th>STARTED (UTC)</th>
                 <th>DIFF</th>
                 <th>RERUN</th>
+                <th>DELETE</th>
             </tr>
         </thead>
         <tbody>

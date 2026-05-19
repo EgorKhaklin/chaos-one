@@ -246,3 +246,64 @@ def test_landing_includes_rerun_buttons(isolated_client: TestClient) -> None:
     body = isolated_client.get("/").text
     assert f'action="/engagements/{record["id"]}/rerun"' in body
     assert ">rerun</button>" in body
+
+
+def test_engagement_delete_removes_record_and_log(
+    isolated_client: TestClient, tmp_path: Path
+) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "1"})
+    record = isolated_client.get("/engagements").json()["engagements"][0]
+    log_path = Path(record["log_path"])
+    assert log_path.exists()
+
+    response = isolated_client.delete(f"/engagements/{record['id']}")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["deleted"] is True
+    assert payload["log_removed"] is True
+
+    assert isolated_client.get(f"/engagements/{record['id']}").status_code == 404
+    assert not log_path.exists()
+
+
+def test_engagement_delete_404_when_missing(isolated_client: TestClient) -> None:
+    response = isolated_client.delete("/engagements/eng_nope")
+    assert response.status_code == 404
+
+
+def test_engagement_delete_keep_log_flag(isolated_client: TestClient) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "1"})
+    record = isolated_client.get("/engagements").json()["engagements"][0]
+    log_path = Path(record["log_path"])
+    assert log_path.exists()
+
+    response = isolated_client.delete(f"/engagements/{record['id']}?delete_log=false")
+    assert response.status_code == 200
+    assert response.json()["log_removed"] is False
+    assert log_path.exists()
+
+
+def test_engagement_delete_post_form_redirects_to_landing(
+    isolated_client: TestClient,
+) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "1"})
+    record = isolated_client.get("/engagements").json()["engagements"][0]
+
+    # follow_redirects=False so we can inspect the 303 directly.
+    response = isolated_client.post(
+        f"/engagements/{record['id']}/delete",
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+    assert isolated_client.get("/engagements").json()["count"] == 0
+
+
+def test_landing_includes_delete_buttons(isolated_client: TestClient) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "1"})
+    record = isolated_client.get("/engagements").json()["engagements"][0]
+
+    body = isolated_client.get("/").text
+    assert f'action="/engagements/{record["id"]}/delete"' in body
+    assert ">delete</button>" in body
