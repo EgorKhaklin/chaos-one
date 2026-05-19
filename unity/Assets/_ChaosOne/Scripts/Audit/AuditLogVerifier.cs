@@ -73,7 +73,11 @@ namespace ChaosOne.Audit
         {
             var canonical =
                 $"{entry.previous_hash}|{entry.sequence}|{entry.monotonic_ts:R}|{entry.event_type}|{entry.payload_json}";
-            var digest = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
+            byte[] digest;
+            using (var sha = SHA256.Create())
+            {
+                digest = sha.ComputeHash(Encoding.UTF8.GetBytes(canonical));
+            }
             var sb = new StringBuilder(digest.Length * 2);
             foreach (var b in digest) sb.Append(b.ToString("x2"));
             return sb.ToString();

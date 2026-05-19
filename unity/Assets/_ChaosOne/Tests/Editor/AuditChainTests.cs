@@ -74,7 +74,11 @@ namespace ChaosOne.Tests
         public static string Compute(string prev, long sequence, double monotonic, string type, string payload)
         {
             var canonical = $"{prev}|{sequence}|{monotonic:R}|{type}|{payload}";
-            var digest = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical));
+            byte[] digest;
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                digest = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(canonical));
+            }
             var sb = new System.Text.StringBuilder(digest.Length * 2);
             foreach (var b in digest) sb.Append(b.ToString("x2"));
             return sb.ToString();

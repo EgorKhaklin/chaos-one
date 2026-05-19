@@ -107,10 +107,12 @@ namespace ChaosOne.EditorScripts
                 case "macos":
                 case "macosx":
                 case "macosuniversal":
+                case "osxuniversal":
                 case "standaloneosx":
                     return BuildTarget.StandaloneOSX;
                 case "windows":
                 case "windows64":
+                case "win64":
                 case "standalonewindows64":
                     return BuildTarget.StandaloneWindows64;
                 case "linux":

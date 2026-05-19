@@ -2,7 +2,8 @@
     "name": "ChaosOne.Editor",
     "rootNamespace": "ChaosOne.EditorScripts",
     "references": [
-        "ChaosOne.Runtime"
+        "ChaosOne.Runtime",
+        "Unity.Cinemachine"
     ],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],

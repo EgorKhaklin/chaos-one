@@ -57,15 +57,15 @@ done
 
 case "$TARGET" in
     macos|mac|osx)
-        TARGET_FLAG="macOSUniversal"
+        TARGET_FLAG="OSXUniversal"
         DEFAULT_OUTPUT="${SCRIPT_DIR}/dist/ChaosOne.app"
         ;;
     windows|win)
-        TARGET_FLAG="windows64"
+        TARGET_FLAG="Win64"
         DEFAULT_OUTPUT="${SCRIPT_DIR}/dist/ChaosOne.exe"
         ;;
     linux)
-        TARGET_FLAG="linux64"
+        TARGET_FLAG="Linux64"
         DEFAULT_OUTPUT="${SCRIPT_DIR}/dist/ChaosOne"
         ;;
     *)
