@@ -166,6 +166,34 @@ Output is JSON on stdout — pipe into `jq` for filtering.
 
 ---
 
+## Building the Unity .app
+
+The Unity side builds headlessly once a scene exists:
+
+```
+bash unity/build.sh                       # macOS .app -> unity/dist/ChaosOne.app
+bash unity/build.sh --target windows
+bash unity/build.sh --target linux
+make unity-app                            # same as the first form
+make full-launcher                        # backend binary + Unity .app under dist/
+```
+
+`unity/build.sh` auto-discovers a Unity 6 LTS install via Unity Hub
+(macOS: `/Applications/Unity/Hub/Editor`, Linux: `~/Unity/Hub/Editor`)
+and invokes `Unity -batchmode -executeMethod
+ChaosOne.EditorScripts.BuildPlayer.Run` against this project. The
+build script at `Assets/_ChaosOne/Editor/BuildPlayer.cs` resolves
+scenes from `EditorBuildSettings` or `Assets/_ChaosOne/Scenes/*.unity`.
+
+**One-time manual setup before `build.sh` produces a working .app:**
+the repo ships with C# code, shaders, UXML, and an asmdef but no
+scene assets. Open the project in Unity Hub once and save a scene at
+`Assets/_ChaosOne/Scenes/Battlespace.unity` (steps below in
+"Quickstart — Unity"). After that, every subsequent build is fully
+headless via `bash unity/build.sh`.
+
+---
+
 ## Quickstart — Unity
 
 1. Install Unity 6 LTS via Unity Hub.
