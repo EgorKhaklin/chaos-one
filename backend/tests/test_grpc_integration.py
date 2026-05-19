@@ -121,3 +121,38 @@ async def test_server_shutdown_is_clean() -> None:
     await server.start()
 
     await asyncio.wait_for(server.stop(grace=0.1), timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_stream_updates_reports_unimplemented(grpc_server: str) -> None:
+    pb2 = importlib.import_module("chaos_backend.generated.chaos_one_pb2")
+    pb2_grpc = importlib.import_module("chaos_backend.generated.chaos_one_pb2_grpc")
+
+    async with grpc.aio.insecure_channel(grpc_server) as channel:
+        stub = pb2_grpc.DiscriminationStub(channel)
+
+        async def _request_iter() -> AsyncIterator[object]:
+            yield pb2.TrackObservation(track_id="TRK-STREAM-001")
+
+        stream = stub.StreamUpdates(_request_iter())
+        with pytest.raises(grpc.RpcError) as exc:
+            async for _ in stream:
+                pass
+
+        assert exc.value.code() == grpc.StatusCode.UNIMPLEMENTED
+
+
+@pytest.mark.asyncio
+async def test_stream_playbook_reports_unimplemented(grpc_server: str) -> None:
+    pb2 = importlib.import_module("chaos_backend.generated.chaos_one_pb2")
+    pb2_grpc = importlib.import_module("chaos_backend.generated.chaos_one_pb2_grpc")
+
+    async with grpc.aio.insecure_channel(grpc_server) as channel:
+        stub = pb2_grpc.AdversaryModelStub(channel)
+        stream = stub.StreamPlaybook(pb2.AdversaryQuery())
+
+        with pytest.raises(grpc.RpcError) as exc:
+            async for _ in stream:
+                pass
+
+        assert exc.value.code() == grpc.StatusCode.UNIMPLEMENTED
