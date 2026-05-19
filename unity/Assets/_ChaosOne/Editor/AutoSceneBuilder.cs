@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using ChaosOne.Cameras;
 using ChaosOne.Core;
+using ChaosOne.Scenarios;
 using ChaosOne.UI;
 using Unity.Cinemachine;
 using UnityEditor;
@@ -52,6 +53,8 @@ namespace ChaosOne.EditorScripts
             var vcam = BuildCinemachineCamera();
             BuildCinemachineDirector(vcam);
             BuildChaosOneRoot();
+
+            BuildDemoTrack();
 
             var panelSettings = EnsurePanelSettings();
             BuildUIDocument<ModeHUD>("UI_ModeHUD", "Assets/_ChaosOne/UI/ModeHUD.uxml", panelSettings);
@@ -127,6 +130,40 @@ namespace ChaosOne.EditorScripts
             var go = new GameObject("ChaosOne");
             go.AddComponent<SceneBootstrap>();
             go.AddComponent<PerfOverlay>();
+        }
+
+        private static void BuildDemoTrack()
+        {
+            // A plain primitive sphere with a TrailRenderer so the camera
+            // sees motion on launch. The real Stage pipeline replaces this
+            // with ThreatTrack + TrackVisuals + envelope shader once a
+            // ThreatArchetype.asset exists.
+            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            go.name = "DemoTrack";
+            go.transform.localScale = new Vector3(160f, 160f, 160f);
+            Object.DestroyImmediate(go.GetComponent<SphereCollider>());
+
+            var renderer = go.GetComponent<MeshRenderer>();
+            if (renderer != null)
+            {
+                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+
+            var trail = go.AddComponent<TrailRenderer>();
+            trail.time = 4f;
+            trail.startWidth = 90f;
+            trail.endWidth = 5f;
+            trail.minVertexDistance = 8f;
+            trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            trail.receiveShadows = false;
+
+            var defaultLineMaterial = AssetDatabase.GetBuiltinExtraResource<Material>("Default-Line.mat");
+            if (defaultLineMaterial != null)
+            {
+                trail.sharedMaterial = defaultLineMaterial;
+            }
+
+            go.AddComponent<DemoTrackMover>();
         }
 
         private const string PanelSettingsPath = "Assets/_ChaosOne/UI/PanelSettings.asset";
