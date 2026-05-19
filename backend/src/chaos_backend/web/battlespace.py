@@ -1,10 +1,16 @@
 """Battlespace visualization — a Canvas-rendered, self-contained scene.
 
-The page draws the missile-defense stage with real perspective math
-(world -> view -> NDC -> pixel) and overlays the operator UI on top.
-Everything is computed on the client; no server-side state is needed
-beyond serving the HTML. The dashboard's other endpoints continue to
-handle audit logs and engagements.
+Geometry is computed in the browser with explicit 4×4 view/projection
+matrices: worldPos -> view * worldPos -> projection * viewPos, then
+homogeneous-divide and map normalized device coordinates to CSS pixels.
+Trails are interpolated with a Catmull-Rom spline so the rendered curve
+is C¹-continuous regardless of the sampling rate, and every line stroke
+is pixel-snapped (0.5-offset) for crisp single-pixel lines on retina.
+
+The page is self-contained — no external assets — so iteration cycles
+don't depend on Unity rebuilds and the scene renders deterministically
+in any browser. A small harness (`window.__chaos`) lets an automated
+browser pin the demo to a chosen frame for reproducible verification.
 """
 
 from __future__ import annotations
@@ -27,13 +33,17 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             --bone:        #E8E2D0;
             --bone-dim:    rgba(232, 226, 208, 0.55);
             --bone-dimmer: rgba(232, 226, 208, 0.30);
-            --bg-deep:     #050B16;
+            --bg-deep:     #04091A;
             --bg-mid:      #0A1628;
-            --bg-panel:    rgba(10, 22, 40, 0.82);
+            --bg-panel:    rgba(10, 22, 40, 0.84);
             --rule:        rgba(201, 169, 97, 0.32);
             --amber:       #DC9A3C;
             --crimson:     #DC5050;
             --mint:        #96DCA0;
+
+            /* Universal timings — fast snappy reveals, no slow tweens. */
+            --t-fast:      90ms cubic-bezier(0.22, 1, 0.36, 1);
+            --t-bar:       0ms linear;
         }
         * { box-sizing: border-box; }
         html, body {
@@ -60,21 +70,24 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             height: 38px;
             display: flex; align-items: center;
             padding: 0 24px;
-            background: rgba(10, 22, 40, 0.92);
+            background: rgba(8, 18, 32, 0.94);
             border-bottom: 1px solid var(--rule);
             font-size: 11px;
             letter-spacing: 2.5px;
+            backdrop-filter: blur(6px);
         }
         .mode-hud__letter {
             color: var(--gold);
             font-weight: 800;
             font-size: 16px;
             width: 24px;
+            transition: color var(--t-fast);
         }
         .mode-hud__name {
             color: var(--bone);
             font-weight: 700;
             margin-right: 18px;
+            transition: color var(--t-fast);
         }
         .mode-hud__cell {
             color: var(--bone-dim);
@@ -93,6 +106,19 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             font-variant-numeric: tabular-nums;
         }
 
+        /* ─── Classification banner ─── */
+        .classbar {
+            top: 38px; left: 0; right: 0;
+            height: 18px;
+            display: flex; align-items: center; justify-content: center;
+            color: rgba(150, 220, 160, 0.85);
+            background: rgba(8, 18, 30, 0.55);
+            font-size: 9px;
+            letter-spacing: 4px;
+            font-weight: 800;
+            border-bottom: 1px solid rgba(150, 220, 160, 0.18);
+        }
+
         /* ─── Decisions Panel (right) ─── */
         .decisions {
             top: 70px; right: 24px;
@@ -104,6 +130,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             border-right: 1px solid var(--rule);
             border-bottom: 1px solid var(--rule);
             pointer-events: auto;
+            backdrop-filter: blur(8px);
         }
         .decisions__title {
             color: var(--gold);
@@ -125,6 +152,14 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             border-top: 1px solid rgba(232, 226, 208, 0.08);
             border-right: 1px solid rgba(232, 226, 208, 0.08);
             border-bottom: 1px solid rgba(232, 226, 208, 0.08);
+            opacity: 0;
+            transform: translateY(2px);
+            animation: coa-in 110ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
+        .coa:nth-child(2) { animation-delay: 25ms; }
+        .coa:nth-child(3) { animation-delay: 50ms; }
+        @keyframes coa-in {
+            to { opacity: 1; transform: translateY(0); }
         }
         .coa--rec {
             border-left-color: var(--gold);
@@ -178,7 +213,8 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         .coa__bar-fill {
             height: 100%;
             background: var(--gold);
-            transition: width 100ms linear;
+            transition: width var(--t-bar);
+            will-change: width;
         }
         .coa__btns {
             display: flex; gap: 6px;
@@ -191,16 +227,19 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             font-weight: 800;
             border: none;
             cursor: pointer;
+            transition: background var(--t-fast), border-color var(--t-fast);
         }
         .coa__btn--p {
             background: var(--gold);
             color: var(--bg-mid);
         }
+        .coa__btn--p:hover { background: rgb(220, 188, 116); }
         .coa__btn--s {
             background: rgba(232, 226, 208, 0.06);
             color: rgba(232, 226, 208, 0.85);
             border: 1px solid rgba(232, 226, 208, 0.18);
         }
+        .coa__btn--s:hover { background: rgba(232, 226, 208, 0.12); }
         .decisions__hint {
             margin-top: 8px;
             padding-top: 8px;
@@ -227,6 +266,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             border-top: 1px solid var(--rule);
             border-right: 1px solid var(--rule);
             border-bottom: 1px solid var(--rule);
+            backdrop-filter: blur(8px);
         }
         .adv__title {
             color: var(--gold);
@@ -266,7 +306,8 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         .hyp__bar-fill {
             height: 100%;
             background: var(--gold);
-            transition: width 350ms ease;
+            transition: width 110ms cubic-bezier(0.22, 1, 0.36, 1);
+            will-change: width;
         }
         .cost {
             margin-top: 10px;
@@ -288,6 +329,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             flex: 1;
             background: rgba(201, 169, 97, 0.65);
             min-width: 2px;
+            transition: height var(--t-fast);
         }
 
         /* ─── Calm Channel (bottom strip) ─── */
@@ -296,11 +338,12 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             height: 32px;
             display: flex; align-items: center;
             padding: 0 24px;
-            background: rgba(10, 22, 40, 0.92);
+            background: rgba(8, 18, 32, 0.94);
             border-top: 1px solid var(--rule);
             font-size: 10px;
             letter-spacing: 0.5px;
             overflow: hidden;
+            backdrop-filter: blur(6px);
         }
         .calm__label {
             color: var(--gold);
@@ -343,6 +386,8 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             border-left-width: 2px;
             padding: 4px 8px 4px 8px;
             font-variant-numeric: tabular-nums;
+            transition: left var(--t-fast), top var(--t-fast);
+            will-change: left, top;
         }
         .callout__id {
             color: var(--gold);
@@ -353,36 +398,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             margin-bottom: 1px;
         }
 
-        /* ─── Watermark (lower-right) ─── */
-        .wm {
-            bottom: 44px; right: 24px;
-            color: rgba(201, 169, 97, 0.32);
-            font-size: 9px;
-            letter-spacing: 4px;
-            font-weight: 700;
-            text-align: right;
-        }
-        .wm__big {
-            color: rgba(201, 169, 97, 0.45);
-            font-size: 11px;
-            letter-spacing: 6px;
-            margin-bottom: 2px;
-        }
-
-        /* ─── Classification banner (top, between HUD and stage) ─── */
-        .classbar {
-            top: 38px; left: 0; right: 0;
-            height: 18px;
-            display: flex; align-items: center; justify-content: center;
-            color: rgba(150, 220, 160, 0.85);
-            background: rgba(8, 18, 30, 0.6);
-            font-size: 9px;
-            letter-spacing: 4px;
-            font-weight: 800;
-            border-bottom: 1px solid rgba(150, 220, 160, 0.18);
-        }
-
-        /* ─── Stats block (bottom-right) ─── */
+        /* ─── Stats block (lower-right) ─── */
         .stats {
             bottom: 110px; right: 24px;
             width: 280px;
@@ -394,6 +410,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             border-bottom: 1px solid var(--rule);
             font-size: 10px;
             letter-spacing: 1px;
+            backdrop-filter: blur(8px);
         }
         .stats__title {
             color: rgb(150, 220, 160);
@@ -423,9 +440,26 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             font-weight: 700;
             text-align: right;
             letter-spacing: 0.5px;
+            transition: color var(--t-fast);
         }
         .stats__v--ok   { color: rgb(150, 220, 160); }
         .stats__v--warn { color: rgb(220, 160, 60); }
+
+        /* ─── Watermark ─── */
+        .wm {
+            bottom: 44px; right: 320px;
+            color: rgba(201, 169, 97, 0.32);
+            font-size: 9px;
+            letter-spacing: 4px;
+            font-weight: 700;
+            text-align: right;
+        }
+        .wm__big {
+            color: rgba(201, 169, 97, 0.45);
+            font-size: 11px;
+            letter-spacing: 6px;
+            margin-bottom: 2px;
+        }
     </style>
 </head>
 <body>
@@ -444,6 +478,8 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         <span class="mode-hud__cell">PQC-HYBRID</span>
         <span class="mode-hud__mag" id="modeMag">MAG 22 NGI / 48 SM-3 / 320 PAC-3 / HEL 1.2MJ</span>
     </div>
+
+    <div class="overlay classbar">UNCLASSIFIED // DEMO // FOR EVALUATION</div>
 
     <div class="overlay decisions">
         <div class="decisions__title">DECISIONS</div>
@@ -468,13 +504,6 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         <div class="calm__list" id="calmList"></div>
     </div>
 
-    <div class="overlay wm">
-        <div class="wm__big">CHAOS ONE</div>
-        <div>BATTLESPACE · v__VERSION__</div>
-    </div>
-
-    <div class="overlay classbar">UNCLASSIFIED // DEMO // FOR EVALUATION</div>
-
     <div class="overlay stats">
         <div class="stats__title">ENGAGEMENT STATE</div>
         <div class="stats__rule"></div>
@@ -487,31 +516,33 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         <div class="stats__row"><span class="stats__k">PQC POSTURE</span><span class="stats__v stats__v--ok" id="stPqc">HYBRID</span></div>
     </div>
 
+    <div class="overlay wm">
+        <div class="wm__big">CHAOS ONE</div>
+        <div>BATTLESPACE · v__VERSION__</div>
+    </div>
+
 <script>
 (() => {
 'use strict';
 
-// ─────────────────────────────────────────────────────────────────────
-//   3D math — view + perspective projection
-//   Right-handed world: +X east, +Y up, +Z north. Camera orbits the
-//   origin. All distances in metres.
-// ─────────────────────────────────────────────────────────────────────
-const V = {
-    sub: (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]],
-    add: (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]],
+// ═════════════════════════════════════════════════════════════════════
+//   MATH LAYER
+//   Right-handed coordinate system: +X east, +Y up, +Z north.
+//   All distances are metres. All angles are radians.
+// ═════════════════════════════════════════════════════════════════════
+const V3 = {
+    sub:   (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]],
+    add:   (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]],
     scale: (a, s) => [a[0]*s, a[1]*s, a[2]*s],
-    dot: (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2],
-    cross: (a, b) => [
-        a[1]*b[2] - a[2]*b[1],
-        a[2]*b[0] - a[0]*b[2],
-        a[0]*b[1] - a[1]*b[0],
-    ],
-    len: (a) => Math.hypot(a[0], a[1], a[2]),
-    norm: (a) => {
-        const L = Math.hypot(a[0], a[1], a[2]) || 1;
-        return [a[0]/L, a[1]/L, a[2]/L];
+    dot:   (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2],
+    cross: (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]],
+    len:   (a) => Math.hypot(a[0], a[1], a[2]),
+    norm:  (a) => {
+        const L = Math.hypot(a[0], a[1], a[2]);
+        return L > 0 ? [a[0]/L, a[1]/L, a[2]/L] : [0, 0, 0];
     },
-    lerp: (a, b, t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t],
+    lerp:  (a, b, t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t],
+    // Quadratic Bezier: B(t) = (1-t)²P0 + 2(1-t)t P1 + t² P2
     bezQ: (p0, p1, p2, t) => {
         const u = 1 - t;
         return [
@@ -520,18 +551,95 @@ const V = {
             u*u*p0[2] + 2*u*t*p1[2] + t*t*p2[2],
         ];
     },
+    // Catmull-Rom interpolation between p1 and p2, with p0/p3 as
+    // neighbours. t in [0, 1]. Yields C¹-continuous curves through the
+    // control points.
+    catmull: (p0, p1, p2, p3, t) => {
+        const t2 = t * t, t3 = t2 * t;
+        const a = -0.5 * t3 + t2 - 0.5 * t;
+        const b =  1.5 * t3 - 2.5 * t2 + 1.0;
+        const c = -1.5 * t3 + 2.0 * t2 + 0.5 * t;
+        const d =  0.5 * t3 - 0.5 * t2;
+        return [
+            a*p0[0] + b*p1[0] + c*p2[0] + d*p3[0],
+            a*p0[1] + b*p1[1] + c*p2[1] + d*p3[1],
+            a*p0[2] + b*p1[2] + c*p2[2] + d*p3[2],
+        ];
+    },
 };
 
+// 4×4 matrix. Stored as a 16-element Float32Array in column-major form
+// (m[col*4 + row]) so it matches the conventional OpenGL / WebGPU
+// layout. Multiplication is C = A * B.
+const M4 = {
+    create:   () => new Float32Array(16),
+    identity: () => { const m = new Float32Array(16); m[0]=m[5]=m[10]=m[15]=1; return m; },
+
+    multiply: (a, b) => {
+        const o = new Float32Array(16);
+        for (let r = 0; r < 4; r++) {
+            for (let c = 0; c < 4; c++) {
+                let s = 0;
+                for (let k = 0; k < 4; k++) s += a[k*4 + r] * b[c*4 + k];
+                o[c*4 + r] = s;
+            }
+        }
+        return o;
+    },
+
+    // Right-handed perspective: maps view-space points with negative z
+    // (in front of the camera) into normalized device coordinates in
+    // [-1, 1]^3. fovY is vertical field of view in radians.
+    perspective: (fovY, aspect, near, far) => {
+        const f = 1 / Math.tan(fovY * 0.5);
+        const nf = 1 / (near - far);
+        const m = new Float32Array(16);
+        m[0] = f / aspect;
+        m[5] = f;
+        m[10] = (far + near) * nf;
+        m[11] = -1;
+        m[14] = 2 * far * near * nf;
+        return m;
+    },
+
+    // Right-handed lookAt: places the camera at `eye` looking at
+    // `target` with `up` as the world-up reference. The returned matrix
+    // transforms world coordinates into view (camera-local) coordinates
+    // where -Z is forward.
+    lookAt: (eye, target, up) => {
+        const f = V3.norm(V3.sub(target, eye));    // forward (camera looks down -z in view, +z in world to target)
+        const s = V3.norm(V3.cross(f, up));         // side
+        const u = V3.cross(s, f);                   // recomputed up
+        const m = new Float32Array(16);
+        m[0]  =  s[0]; m[4]  =  s[1]; m[8]   =  s[2]; m[12] = -V3.dot(s, eye);
+        m[1]  =  u[0]; m[5]  =  u[1]; m[9]   =  u[2]; m[13] = -V3.dot(u, eye);
+        m[2]  = -f[0]; m[6]  = -f[1]; m[10]  = -f[2]; m[14] =  V3.dot(f, eye);
+        m[3]  =   0;   m[7]  =   0;   m[11]  =   0;   m[15] =  1;
+        return m;
+    },
+
+    // Apply a 4×4 to a vec3 with implicit w = 1. Returns
+    //   { x, y, z, w }  in clip-space coordinates (not yet divided by w).
+    apply: (m, v) => ({
+        x: m[0]*v[0] + m[4]*v[1] + m[8]*v[2]  + m[12],
+        y: m[1]*v[0] + m[5]*v[1] + m[9]*v[2]  + m[13],
+        z: m[2]*v[0] + m[6]*v[1] + m[10]*v[2] + m[14],
+        w: m[3]*v[0] + m[7]*v[1] + m[11]*v[2] + m[15],
+    }),
+};
+
+// ═════════════════════════════════════════════════════════════════════
+//   CAMERA + PROJECTOR
+// ═════════════════════════════════════════════════════════════════════
 class Camera {
     constructor() {
-        // Pivot is the origin of the battlespace (defender battery cluster).
         this.pivot     = [0, 0, 0];
-        this.radius    = 14_000;    // metres back from pivot
-        this.height    = 5_500;     // metres above pivot
-        this.lookAtY   = 1_200;     // raise the look target so the camera tilts down slightly
-        this.angle     = -2.05;     // radians; mild orbit
-        this.angleRate = 0.020;     // radians per second
-        this.fovDeg    = 42;
+        this.radius    = 14_500;
+        this.height    = 6_000;
+        this.lookAtY   = 1_400;
+        this.angle     = -2.05;
+        this.angleRate = 0.018;
+        this.fovDeg    = 40;
     }
     eye() {
         return [
@@ -541,62 +649,64 @@ class Camera {
         ];
     }
     target() { return [this.pivot[0], this.pivot[1] + this.lookAtY, this.pivot[2]]; }
-    advance(dtSeconds) {
-        this.angle += this.angleRate * dtSeconds;
-    }
+    tick(dt) { this.angle += this.angleRate * dt; }
 }
 
 class Projector {
     constructor(camera, width, height) {
         this.cam = camera;
-        this.w = width;
-        this.h = height;
-        // f = focal length in pixels. f = (h/2) / tan(fov/2).
-        this.f = (height / 2) / Math.tan((camera.fovDeg * Math.PI / 180) / 2);
-        this._rebuild();
-    }
-    _rebuild() {
-        const eye = this.cam.eye();
-        const tgt = this.cam.target();
-        const forward = V.norm(V.sub(tgt, eye));
-        const right = V.norm(V.cross(forward, [0, 1, 0]));
-        const up = V.cross(right, forward);
-        this.eye = eye;
-        this.right = right;
-        this.up = up;
-        this.forward = forward;
+        this.resize(width, height);
     }
     resize(width, height) {
         this.w = width;
         this.h = height;
-        this.f = (height / 2) / Math.tan((this.cam.fovDeg * Math.PI / 180) / 2);
+        this._build();
     }
-    refresh() { this._rebuild(); }
+    _build() {
+        const fovY = this.cam.fovDeg * Math.PI / 180;
+        const aspect = this.w / this.h;
+        const proj = M4.perspective(fovY, aspect, 10, 200_000);
+        const view = M4.lookAt(this.cam.eye(), this.cam.target(), [0, 1, 0]);
+        this.viewProj = M4.multiply(proj, view);
+    }
+    tick() { this._build(); }
+    // Project world → CSS pixels. Returns null for points behind the
+    // near plane (clip after homogeneous divide).
     project(p) {
-        // Vector from eye to point, decomposed into the camera basis.
-        const rel = V.sub(p, this.eye);
-        const x =  V.dot(rel, this.right);
-        const y =  V.dot(rel, this.up);
-        const z =  V.dot(rel, this.forward);   // depth in front of camera
-        if (z <= 1) return null;               // behind camera or too close
+        const c = M4.apply(this.viewProj, p);
+        if (c.w <= 0) return null;
+        const ndcX = c.x / c.w;
+        const ndcY = c.y / c.w;
+        const ndcZ = c.z / c.w;
+        if (ndcZ > 1 || ndcZ < -1) return null;
         return {
-            sx: this.w / 2 + (x / z) * this.f,
-            sy: this.h / 2 - (y / z) * this.f,
-            depth: z,
+            sx: (ndcX * 0.5 + 0.5) * this.w,
+            sy: (1 - (ndcY * 0.5 + 0.5)) * this.h,
+            depth: c.w,         // distance from camera plane, monotonic with z
         };
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────
-//   World content — range rings, defender batteries, threats
-// ─────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════
+//   SCENE DEFINITION
+//   Defender batteries are spread on a 1900 m circle so they read as
+//   four distinct icons even at 14 km range — earlier 360 m spacing
+//   put them inside one screen pixel of separation.
+// ═════════════════════════════════════════════════════════════════════
 const RING_RADII_M = [2_500, 5_000, 7_500, 10_000, 12_500];
 
+function hexPosition(thetaDeg, radius) {
+    const t = thetaDeg * Math.PI / 180;
+    return [Math.sin(t) * radius, 0, Math.cos(t) * radius];
+}
+
+// 4 batteries at the cardinal points of a 1900-m circle around the
+// defended cell, separated by 90°. Centre command bunker at origin.
 const DEFENDER_BATTERIES = [
-    { id: 'NGI',   pos: [-360, 0,    0], color: [0.55, 0.85, 1.00] },
-    { id: 'SM-3',  pos: [   0, 0,  360], color: [0.55, 0.95, 0.78] },
-    { id: 'PAC-3', pos: [ 360, 0,    0], color: [0.72, 0.95, 0.55] },
-    { id: 'HEL',   pos: [   0, 0, -360], color: [1.00, 0.88, 0.55] },
+    { id: 'NGI',   pos: hexPosition(  0, 1_900), color: [0.55, 0.85, 1.00] },
+    { id: 'SM-3',  pos: hexPosition( 90, 1_900), color: [0.55, 0.95, 0.78] },
+    { id: 'PAC-3', pos: hexPosition(180, 1_900), color: [0.72, 0.95, 0.55] },
+    { id: 'HEL',   pos: hexPosition(270, 1_900), color: [1.00, 0.88, 0.55] },
 ];
 
 const COMPASS = [
@@ -606,76 +716,104 @@ const COMPASS = [
     { id: 'W', pos: [-13_200, 0,      0] },
 ];
 
-// Three threats inbound from different bearings so the picture reads as
-// a coordinated attack across multiple azimuths rather than one parallel
-// stream. Terminal points clustered around 1.5 km of the defender cell.
+// Defended assets — small hex markers along the inner ring so they
+// frame the central battery cluster rather than crowd it.
+const ASSETS = [
+    { id: 'COMMAND', pos: hexPosition(  45, 1_100) },
+    { id: 'PORT',    pos: hexPosition( 135, 1_100) },
+    { id: 'GRID',    pos: hexPosition( 225, 1_100) },
+    { id: 'NODE-7',  pos: hexPosition( 315, 1_100) },
+];
+
+// Three threats inbound from different bearings so the picture reads
+// as a coordinated multi-axis attack instead of a parallel stream.
 const TRACKS = [
     {
-        // West → East, far north of axis
         id: 'HGV-WRAITH-01',
         kind: 'HGV',
-        launch:   [-12_400, 280,  4_200],
-        apogee:   [ -1_400, 7_800,  1_700],
-        terminal: [    900, 350,  -700],
+        launch:   [-12_400,   300,   4_200],
+        apogee:   [ -1_400, 7_800,   1_700],
+        terminal: [    900,   350,    -700],
         cycle: 16,
         phase: 0.00,
         color: [1.00, 0.66, 0.38],
         machBase: 9.4,
+        priority: 1,
     },
     {
-        // SW → NE through the cell
         id: 'HGV-WRAITH-02',
         kind: 'HGV',
-        launch:   [ -8_600, 380, -10_400],
+        launch:   [ -8_600,   380, -10_400],
         apogee:   [ -1_000, 6_400,  -2_800],
-        terminal: [    600, 360,    1_300],
+        terminal: [    600,   360,   1_300],
         cycle: 18,
         phase: 0.34,
         color: [1.00, 0.55, 0.20],
         machBase: 8.8,
+        priority: 2,
     },
     {
-        // NE → SW, depressed trajectory
         id: 'MARV-VIPER-03',
         kind: 'MARV',
-        launch:   [ 11_800, 240,  9_600],
-        apogee:   [  3_400, 4_400,  3_800],
-        terminal: [   -800, 320,   -500],
+        launch:   [ 11_800,   240,   9_600],
+        apogee:   [  3_400, 4_400,   3_800],
+        terminal: [   -800,   320,    -500],
         cycle: 14,
         phase: 0.62,
         color: [0.95, 0.84, 0.55],
         machBase: 6.8,
+        priority: 3,
     },
 ];
 
-// Defended assets — civilian/critical sites that the operator is
-// protecting. Rendered as faint hexagons offset from the defender cell.
-const ASSETS = [
-    { id: 'COMMAND',  pos: [-1_500, 0, -2_400] },
-    { id: 'PORT',     pos: [ 2_800, 0, -3_400] },
-    { id: 'GRID',     pos: [-3_400, 0,  2_200] },
+const ENGAGEMENT_ALLOC = [
+    { defender: 'NGI',  target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 5_400 },
+    { defender: 'NGI',  target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 5_400 },
+    { defender: 'HEL',  target: 'MARV-VIPER-03', kind: 'DIRECTED', speed: 2.998e8 },
 ];
 
-const TRAIL_SAMPLES = 56;
-const trails = TRACKS.map(() => []);
+const findDefender = (id) => DEFENDER_BATTERIES.find(d => d.id === id);
+const findTrack    = (id) => TRACKS.find(t => t.id === id);
 
-function trackPos(track, tNow) {
-    // Cycle [0,1) — when t>1 the track has "splashed" and respawns.
-    const phaseSec = ((tNow + track.phase * track.cycle) % (track.cycle + 1.5));
-    const t = Math.min(1, phaseSec / track.cycle);
-    return V.bezQ(track.launch, track.apogee, track.terminal, t);
+// ═════════════════════════════════════════════════════════════════════
+//   THREAT MOTION
+//   Track position is the Bezier evaluated at t = (clock + phase) / cycle.
+// ═════════════════════════════════════════════════════════════════════
+function trackPhase(tr, tNow) {
+    const total = tr.cycle + 1.6;             // 1.6s post-impact dwell
+    const ps = ((tNow + tr.phase * tr.cycle) % total);
+    return Math.min(1, ps / tr.cycle);
 }
-function trackSpeedMach(track, tNow) {
-    const phaseSec = ((tNow + track.phase * track.cycle) % (track.cycle + 1.5));
-    const t = Math.min(1, phaseSec / track.cycle);
-    // Mach number drops a little near apogee, peaks on the descent.
-    const drop = 1 - 0.18 * Math.sin(Math.PI * t);
-    return track.machBase * drop * (0.95 + 0.10 * t);
+function trackPos(tr, tNow) {
+    return V3.bezQ(tr.launch, tr.apogee, tr.terminal, trackPhase(tr, tNow));
+}
+function trackSpeedMach(tr, tNow) {
+    const t = trackPhase(tr, tNow);
+    return tr.machBase * (1 - 0.18 * Math.sin(Math.PI * t)) * (0.95 + 0.10 * t);
 }
 
-// ─────────────────────────────────────────────────────────────────────
-//   Stars — deterministic by seed
-// ─────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════
+//   CLOCK — fixed-rate logical clock with optional freeze.
+// ═════════════════════════════════════════════════════════════════════
+class Clock {
+    constructor() {
+        this.now = 0;            // monotonic seconds since start
+        this.frozenAt = null;
+    }
+    tick(dt) { if (this.frozenAt === null) this.now += dt; }
+    freeze(sec) { this.frozenAt = sec; this.now = sec; }
+    unfreeze()  { this.frozenAt = null; }
+}
+const clock = new Clock();
+
+// Demo cycle — Mode A → B at 5s, propose COAs at 8s, expire at 19s,
+// authorize at 14s, restore A at 23s, wrap at 28s.
+const CYCLE = 28;
+function cyclePhase() { return clock.now % CYCLE; }
+
+// ═════════════════════════════════════════════════════════════════════
+//   STARS — deterministic placement so reloads are pixel-identical.
+// ═════════════════════════════════════════════════════════════════════
 function mulberry32(seed) {
     return function () {
         seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
@@ -687,7 +825,6 @@ function mulberry32(seed) {
 function makeStars(rng, count, width, height) {
     const out = [];
     for (let i = 0; i < count; i++) {
-        // Stars only in the upper 70% of the sky (sub-horizon).
         out.push({
             x: rng() * width,
             y: rng() * (height * 0.62),
@@ -698,15 +835,14 @@ function makeStars(rng, count, width, height) {
     return out;
 }
 
-// ─────────────────────────────────────────────────────────────────────
-//   Canvas drawing
-// ─────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════
+//   CANVAS
+// ═════════════════════════════════════════════════════════════════════
 const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
 const cam = new Camera();
 let proj = new Projector(cam, window.innerWidth, window.innerHeight);
 let stars = [];
-let starRng = mulberry32(0xC1A05);
 
 function resizeCanvas() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -721,100 +857,97 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-function rgbStr(rgb, alpha) {
-    const r = Math.max(0, Math.min(255, Math.round(rgb[0] * 255)));
-    const g = Math.max(0, Math.min(255, Math.round(rgb[1] * 255)));
-    const b = Math.max(0, Math.min(255, Math.round(rgb[2] * 255)));
-    if (alpha === undefined) return `rgb(${r},${g},${b})`;
-    return `rgba(${r},${g},${b},${alpha})`;
+const snap = (v) => Math.round(v) + 0.5;     // crisp 1-pixel strokes
+const rgbStr = (c, a) => {
+    const r = Math.max(0, Math.min(255, c[0] * 255 | 0));
+    const g = Math.max(0, Math.min(255, c[1] * 255 | 0));
+    const b = Math.max(0, Math.min(255, c[2] * 255 | 0));
+    return a === undefined ? `rgb(${r},${g},${b})` : `rgba(${r},${g},${b},${a})`;
+};
+const easeOutCubic = (x) => 1 - Math.pow(1 - x, 3);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// ═════════════════════════════════════════════════════════════════════
+//   LAYER: sky + atmosphere
+// ═════════════════════════════════════════════════════════════════════
+function horizonScreenY() {
+    // Project a point on the ground plane at 200 km along the camera's
+    // ground-plane forward direction. That gives us a stable horizon Y
+    // regardless of orbit angle.
+    const eye = cam.eye();
+    const f = V3.norm(V3.sub(cam.target(), eye));
+    const groundFwd = V3.norm([f[0], 0, f[2]]);
+    const far = [eye[0] + groundFwd[0]*200_000, 0, eye[2] + groundFwd[2]*200_000];
+    const p = proj.project(far);
+    if (!p) return proj.h * 0.5;
+    return clamp(p.sy, 60, proj.h - 80);
 }
 
-function drawSky(W, H) {
+function drawSky() {
+    const W = proj.w, H = proj.h;
     const horizonY = horizonScreenY();
-    // Upper sky: deep navy → mid navy → near-horizon dusk
-    const grad = ctx.createLinearGradient(0, 0, 0, horizonY);
-    grad.addColorStop(0.00, '#020815');
-    grad.addColorStop(0.55, '#08182E');
-    grad.addColorStop(1.00, '#0E2541');
-    ctx.fillStyle = grad;
+
+    const sky = ctx.createLinearGradient(0, 0, 0, horizonY);
+    sky.addColorStop(0.00, '#020714');
+    sky.addColorStop(0.45, '#06142A');
+    sky.addColorStop(1.00, '#0E2541');
+    ctx.fillStyle = sky;
     ctx.fillRect(0, 0, W, horizonY);
 
-    // Sub-horizon: graded ground panel that blends into bg
-    const groundGrad = ctx.createLinearGradient(0, horizonY, 0, H);
-    groundGrad.addColorStop(0.00, '#0A1B30');
-    groundGrad.addColorStop(0.40, '#06101F');
-    groundGrad.addColorStop(1.00, '#020815');
-    ctx.fillStyle = groundGrad;
+    const ground = ctx.createLinearGradient(0, horizonY, 0, H);
+    ground.addColorStop(0.00, '#0A1B30');
+    ground.addColorStop(0.45, '#060F1E');
+    ground.addColorStop(1.00, '#020814');
+    ctx.fillStyle = ground;
     ctx.fillRect(0, horizonY, W, H - horizonY);
 
-    // Atmospheric halo at horizon
-    const halo = ctx.createLinearGradient(0, horizonY - 36, 0, horizonY + 10);
+    // Atmospheric haze line above the horizon
+    const halo = ctx.createLinearGradient(0, horizonY - 40, 0, horizonY + 12);
     halo.addColorStop(0.00, 'rgba(201, 169, 97, 0.00)');
-    halo.addColorStop(0.70, 'rgba(201, 169, 97, 0.05)');
-    halo.addColorStop(1.00, 'rgba(201, 169, 97, 0.12)');
+    halo.addColorStop(0.65, 'rgba(201, 169, 97, 0.045)');
+    halo.addColorStop(1.00, 'rgba(201, 169, 97, 0.13)');
     ctx.fillStyle = halo;
-    ctx.fillRect(0, horizonY - 36, W, 46);
+    ctx.fillRect(0, horizonY - 40, W, 52);
 
-    // Horizon hairline
-    ctx.strokeStyle = 'rgba(201, 169, 97, 0.28)';
+    ctx.strokeStyle = 'rgba(201, 169, 97, 0.30)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, horizonY + 0.5);
-    ctx.lineTo(W, horizonY + 0.5);
+    ctx.moveTo(0, snap(horizonY));
+    ctx.lineTo(W, snap(horizonY));
     ctx.stroke();
 }
 
-function horizonScreenY() {
-    // Project a point at infinity on the ground plane. We approximate by
-    // projecting a far world point along the camera's ground-plane forward.
-    const eye = proj.eye;
-    // direction projected onto ground plane
-    const groundFwd = [proj.forward[0], 0, proj.forward[2]];
-    const len = Math.hypot(groundFwd[0], groundFwd[2]) || 1;
-    const dir = [groundFwd[0]/len, 0, groundFwd[2]/len];
-    const farPoint = [eye[0] + dir[0]*200_000, 0, eye[2] + dir[2]*200_000];
-    const p = proj.project(farPoint);
-    if (!p) return proj.h * 0.5;
-    return Math.max(60, Math.min(proj.h - 80, p.sy));
-}
-
 function drawStars() {
-    ctx.save();
     for (const s of stars) {
         ctx.fillStyle = `rgba(232, 226, 208, ${s.a})`;
         ctx.beginPath();
         ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
         ctx.fill();
     }
-    ctx.restore();
 }
 
+// ═════════════════════════════════════════════════════════════════════
+//   LAYER: ground grid (rings + radial spokes + cardinal compass)
+// ═════════════════════════════════════════════════════════════════════
 function drawRangeRings() {
-    const segs = 96;
+    const segs = 128;
     for (let r = 0; r < RING_RADII_M.length; r++) {
         const radius = RING_RADII_M[r];
-        const pts = [];
+        ctx.beginPath();
+        let prev = null;
         for (let i = 0; i <= segs; i++) {
             const theta = (i / segs) * Math.PI * 2;
             const p = proj.project([Math.sin(theta) * radius, 0, Math.cos(theta) * radius]);
-            pts.push(p);
+            if (!p) { prev = null; continue; }
+            if (!prev) ctx.moveTo(p.sx, p.sy); else ctx.lineTo(p.sx, p.sy);
+            prev = p;
         }
-        // Alpha decreases with ring index (closest to widest), then by depth.
-        const baseAlpha = 0.62 - r * 0.10;
+        const baseAlpha = 0.60 - r * 0.09;
         ctx.strokeStyle = `rgba(201, 169, 97, ${baseAlpha})`;
-        ctx.lineWidth = r === 0 ? 1.4 : (r === RING_RADII_M.length - 1 ? 0.85 : 1.05);
-        ctx.beginPath();
-        let lastValid = false;
-        for (let i = 0; i < pts.length; i++) {
-            const p = pts[i];
-            if (!p) { lastValid = false; continue; }
-            if (!lastValid) ctx.moveTo(p.sx, p.sy);
-            else            ctx.lineTo(p.sx, p.sy);
-            lastValid = true;
-        }
+        ctx.lineWidth = r === 0 ? 1.3 : (r === RING_RADII_M.length - 1 ? 0.8 : 1.0);
         ctx.stroke();
 
-        // Tick label on the +X side (east).
+        // Tick label
         const labelP = proj.project([radius, 0, 0]);
         if (labelP) {
             ctx.fillStyle = `rgba(201, 169, 97, ${baseAlpha * 0.85})`;
@@ -828,16 +961,17 @@ function drawRangeRings() {
 function drawRadialSpokes() {
     const spokes = 12;
     const outer = RING_RADII_M[RING_RADII_M.length - 1];
+    const origin = proj.project([0, 0, 0]);
+    if (!origin) return;
     for (let i = 0; i < spokes; i++) {
         const theta = (i / spokes) * Math.PI * 2;
-        const a = proj.project([0, 0, 0]);
-        const b = proj.project([Math.sin(theta) * outer, 0, Math.cos(theta) * outer]);
-        if (!a || !b) continue;
-        ctx.strokeStyle = 'rgba(201, 169, 97, 0.14)';
+        const end = proj.project([Math.sin(theta) * outer, 0, Math.cos(theta) * outer]);
+        if (!end) continue;
+        ctx.strokeStyle = 'rgba(201, 169, 97, 0.12)';
         ctx.lineWidth = 0.7;
         ctx.beginPath();
-        ctx.moveTo(a.sx, a.sy);
-        ctx.lineTo(b.sx, b.sy);
+        ctx.moveTo(snap(origin.sx), snap(origin.sy));
+        ctx.lineTo(end.sx, end.sy);
         ctx.stroke();
     }
 }
@@ -847,7 +981,6 @@ function drawCompass() {
         const head = proj.project([c.pos[0], 900, c.pos[2]]);
         const foot = proj.project([c.pos[0], -50,  c.pos[2]]);
         if (!head || !foot) continue;
-        // Pillar
         const g = ctx.createLinearGradient(0, head.sy, 0, foot.sy);
         g.addColorStop(0.0, 'rgba(201, 169, 97, 0.0)');
         g.addColorStop(0.6, 'rgba(201, 169, 97, 0.85)');
@@ -855,11 +988,10 @@ function drawCompass() {
         ctx.strokeStyle = g;
         ctx.lineWidth = 1.4;
         ctx.beginPath();
-        ctx.moveTo(head.sx, head.sy);
-        ctx.lineTo(foot.sx, foot.sy);
+        ctx.moveTo(snap(head.sx), head.sy);
+        ctx.lineTo(snap(foot.sx), foot.sy);
         ctx.stroke();
 
-        // Letter
         ctx.fillStyle = 'rgba(201, 169, 97, 0.92)';
         ctx.font = '800 12px -apple-system, "SF Pro Display", sans-serif';
         ctx.textAlign = 'center';
@@ -869,27 +1001,59 @@ function drawCompass() {
     }
 }
 
+// ═════════════════════════════════════════════════════════════════════
+//   LAYER: defended assets + defender batteries
+// ═════════════════════════════════════════════════════════════════════
+function drawAssets() {
+    for (const a of ASSETS) {
+        const g = proj.project(a.pos);
+        if (!g) continue;
+        const half = Math.max(3, 20 / Math.max(0.5, g.depth / 6500));
+        ctx.strokeStyle = 'rgba(232, 226, 208, 0.55)';
+        ctx.lineWidth = 1.0;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const t = (i / 6) * Math.PI * 2 + Math.PI / 6;
+            const px = g.sx + Math.cos(t) * half;
+            const py = g.sy + Math.sin(t) * half;
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(232, 226, 208, 0.72)';
+        ctx.beginPath();
+        ctx.arc(g.sx, g.sy, 1.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(232, 226, 208, 0.50)';
+        ctx.font = '700 8px ui-monospace, "SF Mono", Menlo, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(a.id, g.sx, g.sy + half + 2);
+        ctx.textAlign = 'start';
+    }
+}
+
 function drawDefenderBatteries() {
     for (const b of DEFENDER_BATTERIES) {
         const base = proj.project(b.pos);
-        const top  = proj.project([b.pos[0], 320, b.pos[2]]);
+        const top  = proj.project([b.pos[0], 380, b.pos[2]]);
         if (!base || !top) continue;
-        // Pedestal chevron — sized to read clearly from the orbit camera
-        // without dominating the central cell.
+        const half = Math.max(5, 90 / Math.max(0.7, base.depth / 7000));
+
+        // Pedestal chevron
         ctx.fillStyle = 'rgba(14, 26, 44, 0.96)';
         ctx.strokeStyle = rgbStr(b.color, 0.95);
-        ctx.lineWidth = 1.3;
-        const half = Math.max(4.0, 90 / Math.max(0.7, base.depth / 6500));
+        ctx.lineWidth = 1.4;
         ctx.beginPath();
-        ctx.moveTo(base.sx - half, base.sy + half * 0.45);
-        ctx.lineTo(base.sx + half, base.sy + half * 0.45);
+        ctx.moveTo(base.sx - half, base.sy + half * 0.42);
+        ctx.lineTo(base.sx + half, base.sy + half * 0.42);
         ctx.lineTo(top.sx,         top.sy);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
 
-        // Halo at apex
-        const glowR = half * 1.9;
+        // Halo
+        const glowR = half * 2.0;
         const halo = ctx.createRadialGradient(top.sx, top.sy, 0, top.sx, top.sy, glowR);
         halo.addColorStop(0, rgbStr(b.color, 0.60));
         halo.addColorStop(1, rgbStr(b.color, 0.00));
@@ -901,82 +1065,60 @@ function drawDefenderBatteries() {
         // Hot core
         ctx.fillStyle = rgbStr(b.color, 1.0);
         ctx.beginPath();
-        ctx.arc(top.sx, top.sy, 2.6, 0, Math.PI * 2);
+        ctx.arc(top.sx, top.sy, 2.5, 0, Math.PI * 2);
         ctx.fill();
 
         // Label below pedestal
-        const labelP = proj.project([b.pos[0], -110, b.pos[2]]);
+        const labelP = proj.project([b.pos[0], -120, b.pos[2]]);
         if (labelP) {
-            ctx.fillStyle = rgbStr(b.color, 0.92);
-            ctx.font = '800 9px ui-monospace, "SF Mono", Menlo, monospace';
+            ctx.fillStyle = rgbStr(b.color, 0.95);
+            ctx.font = '800 9.5px ui-monospace, "SF Mono", Menlo, monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
             ctx.fillText(b.id, labelP.sx, labelP.sy + 2);
             ctx.textAlign = 'start';
         }
     }
-}
 
-function drawAssets() {
-    // Defended assets — small hex marks just above the ground plane,
-    // muted bone color so they read as something to protect but don't
-    // compete with the threats or defenders.
-    for (const a of ASSETS) {
-        const ground = proj.project(a.pos);
-        if (!ground) continue;
-        const half = Math.max(3, 22 / Math.max(0.5, ground.depth / 6500));
-        // Hex
-        ctx.strokeStyle = 'rgba(232, 226, 208, 0.55)';
-        ctx.lineWidth = 1.0;
+    // Centre marker — small bone-color cross at the origin
+    const origin = proj.project([0, 0, 0]);
+    if (origin) {
+        ctx.strokeStyle = 'rgba(232, 226, 208, 0.68)';
+        ctx.lineWidth = 1.1;
         ctx.beginPath();
-        for (let i = 0; i < 6; i++) {
-            const theta = (i / 6) * Math.PI * 2 + Math.PI / 6;
-            const px = ground.sx + Math.cos(theta) * half;
-            const py = ground.sy + Math.sin(theta) * half;
-            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
+        ctx.moveTo(snap(origin.sx - 7), snap(origin.sy));
+        ctx.lineTo(snap(origin.sx + 7), snap(origin.sy));
+        ctx.moveTo(snap(origin.sx),     snap(origin.sy - 7));
+        ctx.lineTo(snap(origin.sx),     snap(origin.sy + 7));
         ctx.stroke();
-        // Inner dot
-        ctx.fillStyle = 'rgba(232, 226, 208, 0.72)';
+        ctx.fillStyle = 'rgba(232, 226, 208, 0.85)';
         ctx.beginPath();
-        ctx.arc(ground.sx, ground.sy, 1.5, 0, Math.PI * 2);
+        ctx.arc(origin.sx, origin.sy, 1.6, 0, Math.PI * 2);
         ctx.fill();
-        // Label
-        ctx.fillStyle = 'rgba(232, 226, 208, 0.55)';
-        ctx.font = '700 8px ui-monospace, "SF Mono", Menlo, monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        ctx.fillText(a.id, ground.sx, ground.sy + half + 2);
-        ctx.textAlign = 'start';
     }
 }
 
+// ═════════════════════════════════════════════════════════════════════
+//   LAYER: sensor coverage arcs
+// ═════════════════════════════════════════════════════════════════════
 function drawSensorCoverage() {
-    // Two notional sensor coverage arcs — a forward radar sector and a
-    // mid-range engagement-zone arc. Drawn as faint ellipses on the
-    // ground so the operator reads them as instruments, not solid geometry.
     const sectors = [
-        { range: 11_000, halfAngle: Math.PI * 0.32, bearing: 0,                color: [0.78, 0.66, 0.38], alpha: 0.20 },
-        { range:  7_000, halfAngle: Math.PI * 0.55, bearing: Math.PI * 0.72,   color: [0.55, 0.78, 0.95], alpha: 0.16 },
+        { range: 11_000, halfAngle: Math.PI * 0.32, bearing: 0,                  color: [0.78, 0.66, 0.38], alpha: 0.20 },
+        { range:  7_000, halfAngle: Math.PI * 0.55, bearing: Math.PI * 0.72,     color: [0.55, 0.78, 0.95], alpha: 0.16 },
     ];
-    const segs = 64;
+    const segs = 80;
     for (const s of sectors) {
-        const start = s.bearing - s.halfAngle;
-        const end   = s.bearing + s.halfAngle;
-        const pts = [];
-        for (let i = 0; i <= segs; i++) {
-            const theta = start + (end - start) * (i / segs);
-            pts.push(proj.project([Math.sin(theta) * s.range, 0, Math.cos(theta) * s.range]));
-        }
-        const a = proj.project([0, 0, 0]);
+        const a0 = s.bearing - s.halfAngle;
+        const a1 = s.bearing + s.halfAngle;
+        const a  = proj.project([0, 0, 0]);
         if (!a) continue;
 
-        // Fill the arc as a thin gradient slice
         ctx.beginPath();
         ctx.moveTo(a.sx, a.sy);
         let any = false;
-        for (const p of pts) {
+        for (let i = 0; i <= segs; i++) {
+            const theta = a0 + (a1 - a0) * (i / segs);
+            const p = proj.project([Math.sin(theta) * s.range, 0, Math.cos(theta) * s.range]);
             if (!p) continue;
             ctx.lineTo(p.sx, p.sy);
             any = true;
@@ -987,12 +1129,13 @@ function drawSensorCoverage() {
             ctx.fill();
         }
 
-        // Stroke the outer arc
         ctx.strokeStyle = rgbStr(s.color, s.alpha * 2.4);
         ctx.lineWidth = 0.9;
         ctx.beginPath();
         let started = false;
-        for (const p of pts) {
+        for (let i = 0; i <= segs; i++) {
+            const theta = a0 + (a1 - a0) * (i / segs);
+            const p = proj.project([Math.sin(theta) * s.range, 0, Math.cos(theta) * s.range]);
             if (!p) { started = false; continue; }
             if (!started) ctx.moveTo(p.sx, p.sy);
             else          ctx.lineTo(p.sx, p.sy);
@@ -1002,222 +1145,230 @@ function drawSensorCoverage() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────
-//   Engagement allocation — defender↔target lines, intercept markers
-// ─────────────────────────────────────────────────────────────────────
-// COA-B allocates 2 NGI shots against the two HGVs + HEL screening.
-// Allocations are list of {defender id, target id, kind}.
-const ENGAGEMENT_ALLOC = [
-    { defender: 'NGI',   target: 'HGV-WRAITH-01', kind: 'KINETIC' },
-    { defender: 'NGI',   target: 'HGV-WRAITH-02', kind: 'KINETIC' },
-    { defender: 'HEL',   target: 'MARV-VIPER-03', kind: 'DIRECTED' },
-];
-
-function findDefender(id) { return DEFENDER_BATTERIES.find(d => d.id === id); }
-function findTrack(id)    { return TRACKS.find(t => t.id === id); }
-
-// Solve interception with a simple iterative model:
-//   - Interceptor leaves the defender now at constant speed v
-//   - Threat follows its Bezier in time. Iterate: pick a candidate
-//     time-of-intercept t_int, recompute threat position at that t,
-//     compare travel time of interceptor to t_int. Converge in 4 steps.
-function predictIntercept(track, defender, tNow, interceptorSpeedMps) {
-    let tInt = 6.0; // initial guess in seconds
-    for (let i = 0; i < 5; i++) {
-        const target = trackPos(track, tNow + tInt);
-        const travel = Math.hypot(
-            target[0] - defender.pos[0],
-            target[1] - defender.pos[1],
-            target[2] - defender.pos[2],
-        ) / interceptorSpeedMps;
-        tInt = travel;
-    }
-    return { tti: tInt, point: trackPos(track, tNow + tInt) };
-}
-
-function drawEngagementAllocations(tNow) {
-    const showAllocations = cyclePhase(tNow) >= 9 && cyclePhase(tNow) < 21;
-    if (!showAllocations) return;
-
-    for (const alloc of ENGAGEMENT_ALLOC) {
-        const def = findDefender(alloc.defender);
-        const tr  = findTrack(alloc.target);
-        if (!def || !tr) continue;
-        const interceptorV = alloc.kind === 'KINETIC' ? 5_400 : 299_792_458;  // m/s
-        const { tti, point } = predictIntercept(tr, def, tNow, interceptorV);
-        const defScreen = proj.project([def.pos[0], 240, def.pos[2]]);
-        const intScreen = proj.project(point);
-        if (!defScreen || !intScreen) continue;
-
-        // Dashed allocation line, gold
-        ctx.strokeStyle = 'rgba(201, 169, 97, 0.55)';
-        ctx.setLineDash([6, 5]);
-        ctx.lineWidth = 1.0;
-        ctx.beginPath();
-        ctx.moveTo(defScreen.sx, defScreen.sy);
-        ctx.lineTo(intScreen.sx, intScreen.sy);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Intercept marker — diamond + bracket
-        const r = 9;
-        ctx.strokeStyle = 'rgba(201, 169, 97, 0.95)';
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.moveTo(intScreen.sx,     intScreen.sy - r);
-        ctx.lineTo(intScreen.sx + r, intScreen.sy);
-        ctx.lineTo(intScreen.sx,     intScreen.sy + r);
-        ctx.lineTo(intScreen.sx - r, intScreen.sy);
-        ctx.closePath();
-        ctx.stroke();
-
-        // Label
-        ctx.fillStyle = 'rgba(201, 169, 97, 0.95)';
-        ctx.font = '800 9px ui-monospace, "SF Mono", Menlo, monospace';
-        ctx.textAlign = 'start';
-        ctx.textBaseline = 'middle';
-        const txt = `${alloc.defender}→${alloc.target.split('-').slice(-1)[0]} · TTI ${tti.toFixed(1)}s`;
-        // Background plate so text reads against any layer
-        const m = ctx.measureText(txt);
-        ctx.fillStyle = 'rgba(10, 22, 40, 0.78)';
-        ctx.fillRect(intScreen.sx + r + 4, intScreen.sy - 8, m.width + 8, 14);
-        ctx.fillStyle = 'rgba(201, 169, 97, 0.95)';
-        ctx.fillText(txt, intScreen.sx + r + 8, intScreen.sy);
-    }
-}
-
-function drawImpactPredictions(tNow) {
-    // Draw an "X" + dashed ring at each track's predicted terminal point.
-    // Pulses brighter as the track gets closer to that terminal.
-    for (let ti = 0; ti < TRACKS.length; ti++) {
-        const tr = TRACKS[ti];
-        const phaseSec = ((tNow + tr.phase * tr.cycle) % (tr.cycle + 1.5));
-        const t = Math.min(1, phaseSec / tr.cycle);
+// ═════════════════════════════════════════════════════════════════════
+//   LAYER: impact-point reticles
+// ═════════════════════════════════════════════════════════════════════
+function drawImpactPredictions() {
+    for (const tr of TRACKS) {
+        const t = trackPhase(tr, clock.now);
         const impact = proj.project([tr.terminal[0], 0, tr.terminal[2]]);
         if (!impact) continue;
-        const urgency = Math.pow(t, 1.8);     // 0..1 — brighter near impact
-        const alpha = 0.35 + urgency * 0.55;
+        const urgency = Math.pow(t, 1.8);
+        const alpha = 0.32 + urgency * 0.55;
+        const r = 10 + urgency * 8;
+
         ctx.strokeStyle = rgbStr(tr.color, alpha);
         ctx.lineWidth = 0.9;
-        // Dashed ring
         ctx.setLineDash([4, 4]);
-        const r = 10 + urgency * 8;
         ctx.beginPath();
         ctx.arc(impact.sx, impact.sy, r, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
-        // Cross hairs
         ctx.beginPath();
-        ctx.moveTo(impact.sx - r * 0.7, impact.sy);
-        ctx.lineTo(impact.sx + r * 0.7, impact.sy);
-        ctx.moveTo(impact.sx, impact.sy - r * 0.7);
-        ctx.lineTo(impact.sx, impact.sy + r * 0.7);
+        ctx.moveTo(snap(impact.sx - r * 0.7), snap(impact.sy));
+        ctx.lineTo(snap(impact.sx + r * 0.7), snap(impact.sy));
+        ctx.moveTo(snap(impact.sx),           snap(impact.sy - r * 0.7));
+        ctx.lineTo(snap(impact.sx),           snap(impact.sy + r * 0.7));
         ctx.stroke();
-
-        // Label
-        ctx.fillStyle = rgbStr(tr.color, alpha);
-        ctx.font = '700 8.5px ui-monospace, "SF Mono", Menlo, monospace';
-        ctx.fillText(`PIP · ${tr.id.split('-').slice(-2).join('-')}`, impact.sx + r + 3, impact.sy - 2);
     }
 }
 
-function drawTrails(tNow) {
+// ═════════════════════════════════════════════════════════════════════
+//   LAYER: trails (Catmull-Rom smoothed)
+// ═════════════════════════════════════════════════════════════════════
+const TRAIL_SAMPLES = 72;
+const trails = TRACKS.map(() => []);
+
+function pushTrailSamples() {
+    for (let i = 0; i < TRACKS.length; i++) {
+        trails[i].push(trackPos(TRACKS[i], clock.now));
+        if (trails[i].length > TRAIL_SAMPLES) trails[i].shift();
+    }
+}
+
+function drawTrails() {
+    const subdivisions = 8;        // Catmull-Rom interior samples per segment
     for (let ti = 0; ti < TRACKS.length; ti++) {
         const tr = TRACKS[ti];
-        const samples = trails[ti];
-        if (samples.length < 2) continue;
-        for (let i = 1; i < samples.length; i++) {
-            const a = proj.project(samples[i - 1]);
-            const b = proj.project(samples[i]);
-            if (!a || !b) continue;
-            const tAge = i / samples.length;        // 0 = oldest, 1 = newest
-            const alpha = Math.pow(tAge, 1.6);      // bias toward fresh end
-            const width = 0.6 + tAge * 2.4;
-            // Fade hot color into deep-navy sky
-            const c = [
-                tr.color[0] * (0.30 + 0.70 * tAge),
-                tr.color[1] * (0.30 + 0.70 * tAge),
-                tr.color[2] * (0.30 + 0.70 * tAge),
+        const s = trails[ti];
+        const n = s.length;
+        if (n < 4) continue;
+
+        // Project all points once; null entries are clip-skips.
+        const proj_pts = new Array(n);
+        for (let i = 0; i < n; i++) proj_pts[i] = proj.project(s[i]);
+
+        for (let i = 1; i < n - 2; i++) {
+            const p0 = s[i - 1], p1 = s[i], p2 = s[i + 1], p3 = s[i + 2];
+            // Per-segment width and alpha based on age (older = thinner/dimmer)
+            const age = (i + 1) / n;
+            const alphaPath = Math.pow(age, 1.6);
+            const widthPath = 0.7 + age * 2.6;
+            const colorBlend = [
+                tr.color[0] * (0.25 + 0.75 * age),
+                tr.color[1] * (0.25 + 0.75 * age),
+                tr.color[2] * (0.25 + 0.75 * age),
             ];
-            ctx.strokeStyle = rgbStr(c, alpha * 0.95);
-            ctx.lineWidth = width;
+            ctx.strokeStyle = rgbStr(colorBlend, alphaPath * 0.95);
+            ctx.lineWidth   = widthPath;
+            ctx.lineCap = 'round';
+
             ctx.beginPath();
-            ctx.moveTo(a.sx, a.sy);
-            ctx.lineTo(b.sx, b.sy);
+            let firstSet = false;
+            for (let k = 0; k <= subdivisions; k++) {
+                const tk = k / subdivisions;
+                const wp = V3.catmull(p0, p1, p2, p3, tk);
+                const sp = proj.project(wp);
+                if (!sp) continue;
+                if (!firstSet) { ctx.moveTo(sp.sx, sp.sy); firstSet = true; }
+                else            { ctx.lineTo(sp.sx, sp.sy); }
+            }
             ctx.stroke();
         }
     }
 }
 
-function drawTracks(tNow) {
-    for (let ti = 0; ti < TRACKS.length; ti++) {
-        const tr = TRACKS[ti];
-        const p = trackPos(tr, tNow);
-        const proj1 = proj.project(p);
-        if (!proj1) continue;
+// ═════════════════════════════════════════════════════════════════════
+//   LAYER: engagement allocations + intercept points
+// ═════════════════════════════════════════════════════════════════════
+function predictIntercept(track, defender, interceptorV) {
+    // 5 fixed-point iterations of: TTI = distance(target(t = TTI)) / v
+    // Converges quickly for the typical 1-15s intercept window.
+    let tti = 6.0;
+    for (let i = 0; i < 6; i++) {
+        const target = trackPos(track, clock.now + tti);
+        const d = Math.hypot(
+            target[0] - defender.pos[0],
+            target[1] - defender.pos[1],
+            target[2] - defender.pos[2],
+        );
+        tti = d / interceptorV;
+    }
+    return { tti, point: trackPos(track, clock.now + tti) };
+}
 
-        // depth-scaled "size"
-        const r = Math.max(2.5, 220 / Math.max(0.5, proj1.depth / 800));
+function drawEngagementAllocations() {
+    if (!(cyclePhase() >= 8 && cyclePhase() < 21)) return;
+    for (const a of ENGAGEMENT_ALLOC) {
+        const def = findDefender(a.defender);
+        const tr  = findTrack(a.target);
+        if (!def || !tr) continue;
+        const { tti, point } = predictIntercept(tr, def, a.speed);
+        const defS = proj.project([def.pos[0], 380, def.pos[2]]);
+        const intS = proj.project(point);
+        if (!defS || !intS) continue;
 
-        // outer glow
-        const g = ctx.createRadialGradient(proj1.sx, proj1.sy, 0, proj1.sx, proj1.sy, r * 4);
-        g.addColorStop(0.00, rgbStr(tr.color, 0.95));
-        g.addColorStop(0.35, rgbStr(tr.color, 0.42));
-        g.addColorStop(1.00, rgbStr(tr.color, 0.00));
-        ctx.fillStyle = g;
+        ctx.strokeStyle = 'rgba(201, 169, 97, 0.55)';
+        ctx.setLineDash([6, 5]);
+        ctx.lineWidth = 1.0;
         ctx.beginPath();
-        ctx.arc(proj1.sx, proj1.sy, r * 4, 0, Math.PI * 2);
-        ctx.fill();
-
-        // hot core
-        ctx.fillStyle = rgbStr([1, 1, 1], 0.98);
-        ctx.beginPath();
-        ctx.arc(proj1.sx, proj1.sy, r * 0.55, 0, Math.PI * 2);
-        ctx.fill();
-
-        // colored ring around core
-        ctx.strokeStyle = rgbStr(tr.color, 0.95);
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.arc(proj1.sx, proj1.sy, r * 1.05, 0, Math.PI * 2);
+        ctx.moveTo(defS.sx, defS.sy);
+        ctx.lineTo(intS.sx, intS.sy);
         ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Diamond + label
+        const r = 9;
+        ctx.strokeStyle = 'rgba(201, 169, 97, 0.95)';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(intS.sx,     intS.sy - r);
+        ctx.lineTo(intS.sx + r, intS.sy);
+        ctx.lineTo(intS.sx,     intS.sy + r);
+        ctx.lineTo(intS.sx - r, intS.sy);
+        ctx.closePath();
+        ctx.stroke();
+
+        ctx.font = '800 9px ui-monospace, "SF Mono", Menlo, monospace';
+        const txt = `${a.defender}→${a.target.split('-').slice(-1)[0]} · TTI ${tti.toFixed(1)}s`;
+        const m = ctx.measureText(txt);
+        ctx.fillStyle = 'rgba(10, 22, 40, 0.85)';
+        ctx.fillRect(intS.sx + r + 4, intS.sy - 8, m.width + 8, 14);
+        ctx.fillStyle = 'rgba(201, 169, 97, 0.95)';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(txt, intS.sx + r + 8, intS.sy);
     }
 }
 
-function positionCallouts(tNow) {
+// ═════════════════════════════════════════════════════════════════════
+//   LAYER: tracks (glowing kinetic markers)
+// ═════════════════════════════════════════════════════════════════════
+function drawTracks() {
+    for (const tr of TRACKS) {
+        const p = trackPos(tr, clock.now);
+        const sp = proj.project(p);
+        if (!sp) continue;
+        const r = Math.max(2.5, 220 / Math.max(0.5, sp.depth / 800));
+
+        const halo = ctx.createRadialGradient(sp.sx, sp.sy, 0, sp.sx, sp.sy, r * 4);
+        halo.addColorStop(0.00, rgbStr(tr.color, 0.95));
+        halo.addColorStop(0.35, rgbStr(tr.color, 0.42));
+        halo.addColorStop(1.00, rgbStr(tr.color, 0.00));
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(sp.sx, sp.sy, r * 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
+        ctx.beginPath();
+        ctx.arc(sp.sx, sp.sy, r * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = rgbStr(tr.color, 0.95);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(sp.sx, sp.sy, r * 1.05, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Priority badge
+        ctx.fillStyle = 'rgba(10, 22, 40, 0.78)';
+        ctx.strokeStyle = rgbStr(tr.color, 0.90);
+        ctx.lineWidth = 1.0;
+        ctx.beginPath();
+        ctx.arc(sp.sx - r * 1.4, sp.sy - r * 1.4, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = rgbStr(tr.color, 0.95);
+        ctx.font = '800 9px ui-monospace, "SF Mono", Menlo, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(tr.priority), sp.sx - r * 1.4, sp.sy - r * 1.4);
+        ctx.textAlign = 'start';
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════
+//   LAYER: callouts (HTML, positioned via JS — uses CSS transitions)
+// ═════════════════════════════════════════════════════════════════════
+function positionCallouts() {
     const container = document.getElementById('callouts');
-    // Re-use existing nodes by id; create lazily.
-    for (let ti = 0; ti < TRACKS.length; ti++) {
-        const tr = TRACKS[ti];
-        const p = trackPos(tr, tNow);
-        const proj1 = proj.project(p);
-        const speed = trackSpeedMach(tr, tNow);
+    for (const tr of TRACKS) {
+        const p = trackPos(tr, clock.now);
+        const sp = proj.project(p);
+        const speed = trackSpeedMach(tr, clock.now);
         const altKm = (p[1] / 1000).toFixed(1);
-        const rangeKm = (Math.hypot(p[0], p[2]) / 1000).toFixed(1);
+        const rngKm = (Math.hypot(p[0], p[2]) / 1000).toFixed(1);
         let node = document.getElementById('co-' + tr.id);
         if (!node) {
             node = document.createElement('div');
             node.id = 'co-' + tr.id;
             node.className = 'callout';
-            node.innerHTML = `
-                <span class="callout__id"></span>
-                <span class="callout__data"></span>
-            `;
+            node.innerHTML = `<span class="callout__id"></span><span class="callout__data"></span>`;
             container.appendChild(node);
         }
-        if (!proj1) { node.style.display = 'none'; continue; }
+        if (!sp) { node.style.display = 'none'; continue; }
         node.style.display = '';
-        node.style.left = (proj1.sx + 18) + 'px';
-        node.style.top  = (proj1.sy - 4) + 'px';
-        node.querySelector('.callout__id').textContent = tr.id;
+        node.style.left = (sp.sx + 18) + 'px';
+        node.style.top  = (sp.sy - 4) + 'px';
+        node.querySelector('.callout__id').textContent = `${tr.id} · P${tr.priority}`;
         node.querySelector('.callout__data').textContent =
-            `${tr.kind} · CONFIDENT · M${speed.toFixed(1)} · ALT ${altKm} km · RNG ${rangeKm} km`;
+            `${tr.kind} · CONFIDENT · M${speed.toFixed(1)} · ALT ${altKm} km · RNG ${rngKm} km`;
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────
-//   UI panels — Mode HUD, Decisions, Adversary Mirror, Calm Channel
-// ─────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════
+//   UI panels
+// ═════════════════════════════════════════════════════════════════════
 const COAS = {
     'COA-A': {
         id: 'COA-A',
@@ -1245,41 +1396,30 @@ const COAS = {
     },
 };
 
-// Demo cycle — Mode A → B at 6s, propose COAs at 9s, authorize COA-B at 18s,
-// expire others at 21s, restore A at 24s, restart 27s.
-const CYCLE = 28;
-let cycleStart = performance.now() / 1000;
-let frozenPhase = null;
-
-function cyclePhase(now) {
-    if (frozenPhase !== null) return frozenPhase;
-    return (now - cycleStart) % CYCLE;
+// COA appearance is shifted earlier in the cycle so they reveal ~1s
+// after the mode trips, not 4s after — feels much snappier.
+function activeCOAs(t) {
+    if (t < 6 || t >= 21) return [];
+    const offset = t - 6;
+    return [
+        { ...COAS['COA-B'], remaining: clamp(COAS['COA-B'].countdownSec - offset, 0, COAS['COA-B'].countdownSec) },
+        { ...COAS['COA-A'], remaining: clamp(COAS['COA-A'].countdownSec - offset, 0, COAS['COA-A'].countdownSec) },
+        { ...COAS['COA-C'], remaining: clamp(COAS['COA-C'].countdownSec - offset, 0, COAS['COA-C'].countdownSec) },
+    ];
 }
-
 function modeAt(t) {
     if (t >= 5 && t < 24) return { letter: 'B', name: 'SENSOR DEGRADED', color: 'amber' };
     return { letter: 'A', name: 'NOMINAL', color: 'gold' };
 }
 
-function activeCOAs(t) {
-    if (t < 9 || t >= 21) return [];
-    const out = [];
-    if (t < 18) {
-        out.push({ ...COAS['COA-B'], remaining: clamp(COAS['COA-B'].countdownSec - (t - 9), 0, COAS['COA-B'].countdownSec) });
-        out.push({ ...COAS['COA-A'], remaining: clamp(COAS['COA-A'].countdownSec - (t - 9), 0, COAS['COA-A'].countdownSec) });
-        out.push({ ...COAS['COA-C'], remaining: clamp(COAS['COA-C'].countdownSec - (t - 9), 0, COAS['COA-C'].countdownSec) });
-    }
-    return out;
-}
-function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-
+let lastCoaSig = '';
 function renderHUD(t) {
     const m = modeAt(t);
     const ltr = document.getElementById('modeLetter');
     const nm  = document.getElementById('modeName');
     const hud = document.getElementById('modeHud');
-    ltr.textContent = m.letter;
-    nm.textContent = m.name;
+    if (ltr.textContent !== m.letter) ltr.textContent = m.letter;
+    if (nm.textContent !== m.name) nm.textContent = m.name;
     hud.style.borderBottomColor = m.color === 'amber' ? 'rgba(220, 160, 60, 0.85)' : 'var(--rule)';
     ltr.style.color = m.color === 'amber' ? '#DC9A3C' : 'var(--gold)';
 }
@@ -1287,32 +1427,45 @@ function renderHUD(t) {
 function renderDecisions(t) {
     const stack = document.getElementById('coaStack');
     const coas = activeCOAs(t);
-    if (coas.length === 0) {
-        stack.innerHTML = `<div class="decisions__empty">STAND BY — NO ACTIVE COA</div>`;
-        return;
+    // Use a signature to avoid rewriting the DOM every frame — keeps
+    // CSS animations and bar transitions clean.
+    const sig = coas.map(c => c.id).join('|') + (coas.length === 0 ? 'X' : '');
+    if (sig !== lastCoaSig) {
+        if (coas.length === 0) {
+            stack.innerHTML = `<div class="decisions__empty">STAND BY — NO ACTIVE COA</div>`;
+        } else {
+            stack.innerHTML = coas.map(c => {
+                const badge = c.rec ? '<span class="coa__badge">RECOMMENDED</span>' : '';
+                return `
+                    <div class="coa ${c.rec ? 'coa--rec' : ''}" data-id="${c.id}" data-cd="${c.countdownSec}">
+                        <div class="coa__top">
+                            <span class="coa__id">${c.id}</span>
+                            ${badge}
+                        </div>
+                        <div class="coa__head">${c.head}</div>
+                        <div class="coa__why">${c.why}</div>
+                        <div class="coa__metrics">${c.metrics.map(m => `<div>${m}</div>`).join('')}</div>
+                        <div class="coa__bar"><div class="coa__bar-fill" style="width:100%"></div></div>
+                        <div class="coa__btns">
+                            <button class="coa__btn coa__btn--p">AUTHORIZE</button>
+                            <button class="coa__btn coa__btn--s">OBJECT</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        lastCoaSig = sig;
     }
-    stack.innerHTML = coas.map(c => {
-        const remPct = (c.remaining / c.countdownSec) * 100;
-        const badge = c.rec ? '<span class="coa__badge">RECOMMENDED</span>' : '';
-        return `
-            <div class="coa ${c.rec ? 'coa--rec' : ''}">
-                <div class="coa__top">
-                    <span class="coa__id">${c.id}</span>
-                    ${badge}
-                </div>
-                <div class="coa__head">${c.head}</div>
-                <div class="coa__why">${c.why}</div>
-                <div class="coa__metrics">
-                    ${c.metrics.map(m => `<div>${m}</div>`).join('')}
-                </div>
-                <div class="coa__bar"><div class="coa__bar-fill" style="width:${remPct}%"></div></div>
-                <div class="coa__btns">
-                    <button class="coa__btn coa__btn--p">AUTHORIZE</button>
-                    <button class="coa__btn coa__btn--s">OBJECT</button>
-                </div>
-            </div>
-        `;
-    }).join('');
+    // Update only the bar widths per frame (cheap, no relayout)
+    if (coas.length > 0) {
+        const cards = stack.querySelectorAll('.coa');
+        for (let i = 0; i < cards.length && i < coas.length; i++) {
+            const card = cards[i];
+            const c = coas[i];
+            const fill = card.querySelector('.coa__bar-fill');
+            if (fill) fill.style.width = ((c.remaining / c.countdownSec) * 100).toFixed(1) + '%';
+        }
+    }
 }
 
 const HYPS_BASE = [
@@ -1323,38 +1476,53 @@ const HYPS_BASE = [
 const sparkHistory = [];
 for (let i = 0; i < 32; i++) sparkHistory.push(1.0 + (Math.sin(i*0.42) + Math.cos(i*0.17)) * 0.08);
 
+let lastHypSig = '';
 function renderAdversary(t) {
-    // Weights drift slowly so it doesn't look static.
     const drift = Math.sin(t * 0.5) * 0.04;
     const hyps = HYPS_BASE.map((h, i) => ({
         name: h.name,
         weight: clamp(h.weight + (i === 0 ? drift : -drift / 2), 0.04, 0.92),
         delta: (i === 0 ? drift : -drift) > 0.005 ? '↑' : (i === 0 ? drift : -drift) < -0.005 ? '↓' : '→',
     }));
-    // Renormalize
     const sum = hyps.reduce((s, h) => s + h.weight, 0);
     hyps.forEach(h => h.weight /= sum);
 
-    document.getElementById('hypStack').innerHTML = hyps.map(h => `
-        <div class="hyp">
-            <span class="hyp__w">${Math.round(h.weight * 100)}%</span>
-            <span class="hyp__n">${h.name}</span>
-            <span class="hyp__d">${h.delta}</span>
-            <span class="hyp__bar"><span class="hyp__bar-fill" style="width:${h.weight * 100}%"></span></span>
-        </div>
-    `).join('');
+    const sig = hyps.map(h => h.name).join('|');
+    const stack = document.getElementById('hypStack');
+    if (sig !== lastHypSig) {
+        stack.innerHTML = hyps.map(h => `
+            <div class="hyp">
+                <span class="hyp__w">${Math.round(h.weight * 100)}%</span>
+                <span class="hyp__n">${h.name}</span>
+                <span class="hyp__d">${h.delta}</span>
+                <span class="hyp__bar"><span class="hyp__bar-fill" style="width:${h.weight * 100}%"></span></span>
+            </div>
+        `).join('');
+        lastHypSig = sig;
+    } else {
+        // Update only the weight text and bar widths per frame
+        const rows = stack.children;
+        for (let i = 0; i < rows.length && i < hyps.length; i++) {
+            rows[i].children[0].textContent = `${Math.round(hyps[i].weight * 100)}%`;
+            rows[i].children[2].textContent = hyps[i].delta;
+            rows[i].children[3].children[0].style.width = (hyps[i].weight * 100).toFixed(1) + '%';
+        }
+    }
 
-    // Cost imposition advances ~once per second.
     const cost = 1.0 + 0.18 * Math.sin(t * 0.20) + 0.05 * Math.cos(t * 0.83);
     sparkHistory.push(cost);
     while (sparkHistory.length > 32) sparkHistory.shift();
     const min = Math.min(...sparkHistory);
     const max = Math.max(...sparkHistory);
     const range = Math.max(0.05, max - min);
-    document.getElementById('costSpark').innerHTML = sparkHistory.map(v => {
-        const h = 15 + ((v - min) / range) * 85;
-        return `<div style="height:${h}%"></div>`;
-    }).join('');
+    const sparkEl = document.getElementById('costSpark');
+    if (sparkEl.children.length !== sparkHistory.length) {
+        sparkEl.innerHTML = sparkHistory.map(() => '<div></div>').join('');
+    }
+    for (let i = 0; i < sparkHistory.length; i++) {
+        const h = 15 + ((sparkHistory[i] - min) / range) * 85;
+        sparkEl.children[i].style.height = h.toFixed(1) + '%';
+    }
     const pct = (cost - 1.0) * 100;
     document.getElementById('costLabel').textContent =
         `COST IMPOSITION ${pct >= 0 ? '+' : ''}${pct.toFixed(0)}% ADV`;
@@ -1372,21 +1540,26 @@ const CALM_BASE = [
     'mode B → A  <em>NOMINAL</em>',
     'audit chain  <em>OK · 14 entries</em>',
 ];
-function renderStats(now) {
-    const t = cyclePhase(now);
-    const engaging = (t >= 9 && t < 21) ? ENGAGEMENT_ALLOC.length : 0;
-    document.getElementById('stEng').textContent = `${engaging} / ${TRACKS.length}`;
+let lastCalmK = -1;
+function renderCalm() {
+    const k = Math.floor(clock.now * 0.4) % CALM_BASE.length;
+    if (k === lastCalmK) return;
+    lastCalmK = k;
+    const ordered = CALM_BASE.slice(k).concat(CALM_BASE.slice(0, k));
+    document.getElementById('calmList').innerHTML = ordered.map(s => `<span>${s}</span>`).join('');
+}
 
-    // Primary TTI = the smallest TTI among allocations against the
-    // highest-priority threat (HGV-WRAITH-01).
+function renderStats() {
+    const t = cyclePhase();
+    const engaging = (t >= 8 && t < 21) ? ENGAGEMENT_ALLOC.length : 0;
+    document.getElementById('stEng').textContent = `${engaging} / ${TRACKS.length}`;
     let primaryTTI = null;
-    for (const alloc of ENGAGEMENT_ALLOC) {
-        if (alloc.target !== 'HGV-WRAITH-01') continue;
-        const def = findDefender(alloc.defender);
-        const tr  = findTrack(alloc.target);
+    for (const a of ENGAGEMENT_ALLOC) {
+        if (a.target !== 'HGV-WRAITH-01') continue;
+        const def = findDefender(a.defender);
+        const tr  = findTrack(a.target);
         if (!def || !tr) continue;
-        const v = alloc.kind === 'KINETIC' ? 5_400 : 299_792_458;
-        const { tti } = predictIntercept(tr, def, now, v);
+        const { tti } = predictIntercept(tr, def, a.speed);
         if (primaryTTI === null || tti < primaryTTI) primaryTTI = tti;
     }
     const ttiEl = document.getElementById('stTTI');
@@ -1399,77 +1572,69 @@ function renderStats(now) {
     }
 }
 
-function renderCalm(t) {
-    // Rotate the list so it reads as a recent-events ticker.
-    const k = Math.floor(t * 0.4) % CALM_BASE.length;
-    const ordered = CALM_BASE.slice(k).concat(CALM_BASE.slice(0, k));
-    document.getElementById('calmList').innerHTML = ordered.map(s => `<span>${s}</span>`).join('');
-}
-
-// ─────────────────────────────────────────────────────────────────────
-//   Frame loop
-// ─────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════
+//   FRAME LOOP
+//   Logical updates run on a fixed 16.67ms step so trajectory motion is
+//   independent of refresh rate. Rendering follows requestAnimationFrame.
+// ═════════════════════════════════════════════════════════════════════
+const FIXED_STEP = 1 / 60;        // 60 Hz logical
 let lastTs = performance.now();
+let accum = 0;
 let trailAccum = 0;
 
 function frame(ts) {
-    const now = ts / 1000;
-    const dt = (ts - lastTs) / 1000;
+    let dt = (ts - lastTs) / 1000;
     lastTs = ts;
+    if (dt > 0.25) dt = 0.25;     // clamp on long pauses
+    accum += dt;
 
-    cam.advance(dt);
-    proj.refresh();
-
-    // Update trails at ~30Hz
-    trailAccum += dt;
-    if (trailAccum > 1 / 30) {
-        trailAccum = 0;
-        for (let ti = 0; ti < TRACKS.length; ti++) {
-            trails[ti].push(trackPos(TRACKS[ti], now));
-            if (trails[ti].length > TRAIL_SAMPLES) trails[ti].shift();
+    while (accum >= FIXED_STEP) {
+        clock.tick(FIXED_STEP);
+        cam.tick(FIXED_STEP);
+        trailAccum += FIXED_STEP;
+        if (trailAccum >= 1 / 30) {
+            pushTrailSamples();
+            trailAccum -= 1 / 30;
         }
+        accum -= FIXED_STEP;
     }
 
-    // Draw
-    drawSky(proj.w, proj.h);
+    proj.tick();
+
+    // Draw — back to front
+    drawSky();
     drawStars();
     drawRadialSpokes();
     drawRangeRings();
     drawSensorCoverage();
-    drawImpactPredictions(now);
+    drawImpactPredictions();
     drawAssets();
     drawCompass();
     drawDefenderBatteries();
-    drawTrails(now);
-    drawEngagementAllocations(now);
-    drawTracks(now);
-    positionCallouts(now);
+    drawTrails();
+    drawEngagementAllocations();
+    drawTracks();
+    positionCallouts();
 
-    // Panels
-    const t = cyclePhase(now);
+    const t = cyclePhase();
     renderHUD(t);
     renderDecisions(t);
-    renderAdversary(now);
-    renderStats(now);
-    renderCalm(now);
+    renderAdversary(clock.now);
+    renderStats();
+    renderCalm();
 
     requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
-// Expose for the harness: lets the test runner freeze time / pump frames.
+// ═════════════════════════════════════════════════════════════════════
+//   HARNESS — exposes clock control for automated visual verification.
+// ═════════════════════════════════════════════════════════════════════
 window.__chaos = {
-    setCycle: (sec) => { cycleStart = (performance.now() / 1000) - sec; },
+    freezeAt: (sec) => { clock.freeze(sec); cam.angleRate = 0; },
+    unfreeze: () => { clock.unfreeze(); cam.angleRate = 0.018; },
     setCameraAngle: (rad) => { cam.angle = rad; cam.angleRate = 0; },
-    freezeAt: (sec) => {
-        frozenPhase = sec;
-        cam.angleRate = 0;
-    },
-    unfreeze: () => {
-        frozenPhase = null;
-        cam.angleRate = 0.020;
-        cycleStart = performance.now() / 1000;
-    },
+    clock: () => clock.now,
 };
 })();
 </script>
