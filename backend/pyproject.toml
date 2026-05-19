@@ -44,6 +44,9 @@ web = [
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.12",
 ]
+package = [
+    "pyinstaller>=6.10.0",
+]
 ml = [
     "torch>=2.3.0",
     "lightgbm>=4.5.0",
@@ -56,6 +59,7 @@ optim = [
 [project.scripts]
 chaos-backend = "chaos_backend.server:main"
 chaos-backend-cli = "chaos_backend.cli:main"
+chaos-one = "chaos_backend.launcher:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

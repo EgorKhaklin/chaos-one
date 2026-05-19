@@ -16,8 +16,9 @@ help:
 	@echo "  make bench     run the micro-benchmark harness"
 	@echo "  make demo      run chaos-backend-cli demo end-to-end"
 	@echo "  make server    run the gRPC server on 127.0.0.1:50051"
+	@echo "  make package   build the chaos-one launcher binary (PyInstaller)"
 	@echo "  make all       install + protos + ci"
-	@echo "  make clean     remove venv and generated stubs"
+	@echo "  make clean     remove venv, build artifacts, and generated stubs"
 
 venv:
 	$(PYTHON) -m venv $(VENV)
@@ -61,6 +62,14 @@ demo:
 bench:
 	$(PY) -m benchmarks.run_all
 
+package:
+	$(PIP) install --quiet "pyinstaller>=6.10.0"
+	$(VENV)/bin/pyinstaller --clean --noconfirm chaos-one.spec
+	@echo ""
+	@echo "package: built artifacts in dist/"
+	@ls -lh dist/ 2>/dev/null || true
+
 clean:
 	rm -rf $(VENV)
+	rm -rf build dist
 	rm -rf src/chaos_backend/generated/chaos_one_pb2*.py
