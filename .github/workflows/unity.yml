@@ -1,0 +1,127 @@
+name: unity
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Build target
+        required: true
+        default: StandaloneOSX
+        type: choice
+        options:
+          - StandaloneOSX
+          - StandaloneWindows64
+          - StandaloneLinux64
+
+permissions:
+  contents: write
+  actions: read
+
+# Required secrets (set under repo Settings -> Secrets and variables -> Actions):
+#   UNITY_LICENSE     contents of your .ulf license file. Generate via
+#                     `unity-license-server` or the GameCI activation flow at
+#                     https://game.ci/docs/github/getting-started.
+#   UNITY_EMAIL       (optional) account email for activation.
+#   UNITY_PASSWORD    (optional) account password for activation.
+#
+# Without UNITY_LICENSE this workflow will fail at activation. Skip the
+# tag push until the secrets are configured, or use the local
+# unity/build.sh path instead.
+
+jobs:
+  build-bootstrap:
+    name: bootstrap scene + build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: StandaloneOSX
+            artifact: chaos-one-unity-macos
+          - os: ubuntu-latest
+            target: StandaloneLinux64
+            artifact: chaos-one-unity-linux
+          - os: windows-latest
+            target: StandaloneWindows64
+            artifact: chaos-one-unity-windows
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: unity/Library
+          key: Library-${{ matrix.target }}-${{ hashFiles('unity/Packages/manifest.json', 'unity/Assets/_ChaosOne/Scripts/**/*.cs') }}
+          restore-keys: |
+            Library-${{ matrix.target }}-
+            Library-
+
+      - name: Bootstrap the Battlespace scene
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity
+          targetPlatform: ${{ matrix.target }}
+          buildMethod: ChaosOne.EditorScripts.AutoSceneBuilder.Create
+          # Bootstrap pass only — no player output here. Builder
+          # honors buildMethod and exits when AutoSceneBuilder.Create
+          # returns, so we don't need to publish artifacts.
+          allowDirtyBuild: true
+
+      - name: Build the Unity player
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity
+          targetPlatform: ${{ matrix.target }}
+          buildName: ChaosOne
+          versioning: None
+          allowDirtyBuild: true
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build/${{ matrix.target }}
+          if-no-files-found: error
+
+  release:
+    name: attach Unity builds to release
+    needs: build-bootstrap
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Archive each platform build
+        run: |
+          mkdir -p release
+          cd artifacts
+          for dir in */; do
+            name="${dir%/}"
+            (cd "$name" && tar -czf "../../release/${name}.tar.gz" .)
+          done
+          ls -lh ../release
+
+      - name: Attach to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.tar.gz
+          draft: false
+          prerelease: false
+          generate_release_notes: true

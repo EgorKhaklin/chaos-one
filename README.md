@@ -168,29 +168,54 @@ Output is JSON on stdout — pipe into `jq` for filtering.
 
 ## Building the Unity .app
 
-The Unity side builds headlessly once a scene exists:
+Fully headless from a fresh clone — no manual scene authoring needed:
 
 ```
-bash unity/build.sh                       # macOS .app -> unity/dist/ChaosOne.app
-bash unity/build.sh --target windows
-bash unity/build.sh --target linux
-make unity-app                            # same as the first form
-make full-launcher                        # backend binary + Unity .app under dist/
+bash unity/build.sh --bootstrap                       # generate scene + build macOS .app
+bash unity/build.sh --bootstrap --target windows
+bash unity/build.sh --bootstrap --target linux
+make unity-app-bootstrap                              # macOS shortcut for the above
+make full-launcher                                    # backend binary + Unity .app under dist/
 ```
+
+The pipeline runs in two passes:
+
+1. **`AutoSceneBuilder.Create`** (Editor script) constructs
+   `Assets/_ChaosOne/Scenes/Battlespace.unity` programmatically:
+   a Main Camera with `CinemachineBrain`, a directional light, a
+   `VCam_SideAltitude` Cinemachine virtual camera, a
+   `CinemachineDirector` wiring them, and a `ChaosOne` GameObject
+   carrying `SceneBootstrap` (spawns every non-UI service on Awake)
+   and `PerfOverlay` (F1 toggle).
+2. **`BuildPlayer.Run`** builds the player for the requested target
+   (macOS Universal, Windows 64, or Linux 64), writes to
+   `unity/dist/ChaosOne.app`.
 
 `unity/build.sh` auto-discovers a Unity 6 LTS install via Unity Hub
-(macOS: `/Applications/Unity/Hub/Editor`, Linux: `~/Unity/Hub/Editor`)
-and invokes `Unity -batchmode -executeMethod
-ChaosOne.EditorScripts.BuildPlayer.Run` against this project. The
-build script at `Assets/_ChaosOne/Editor/BuildPlayer.cs` resolves
-scenes from `EditorBuildSettings` or `Assets/_ChaosOne/Scenes/*.unity`.
+(macOS: `/Applications/Unity/Hub/Editor`, Linux: `~/Unity/Hub/Editor`).
+Pin a specific version with `--editor-version 6000.0.x`.
 
-**One-time manual setup before `build.sh` produces a working .app:**
-the repo ships with C# code, shaders, UXML, and an asmdef but no
-scene assets. Open the project in Unity Hub once and save a scene at
-`Assets/_ChaosOne/Scenes/Battlespace.unity` (steps below in
-"Quickstart — Unity"). After that, every subsequent build is fully
-headless via `bash unity/build.sh`.
+UI Toolkit surfaces (Mode HUD, Decisions Panel, Adversary Mirror,
+Calm Channel, Audit Reel) are not wired into the auto-generated scene
+because they need `PanelSettings` references that should be authored
+deliberately. Add them in the Unity Editor when you want the visuals;
+the auto-built .app is playable without them (it boots all the
+non-UI services and shows the F1 perf overlay).
+
+### Unity builds on GitHub Actions
+
+The `unity.yml` workflow uses [game-ci/unity-builder](https://github.com/game-ci/unity-builder)
+to build the player on the matrix of macOS / Linux / Windows runners
+on every `v*` tag push. **Required secrets** (Settings → Secrets →
+Actions):
+
+  - `UNITY_LICENSE` — contents of your `.ulf` license file (free
+    Personal license via [GameCI's activation flow](https://game.ci/docs/github/activation/personal)).
+  - `UNITY_EMAIL`, `UNITY_PASSWORD` — Unity account credentials for
+    activation.
+
+Without these the workflow fails at activation; either configure them
+or skip Unity CI and use `bash unity/build.sh --bootstrap` locally.
 
 ---
 

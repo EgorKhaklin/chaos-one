@@ -20,6 +20,7 @@ TARGET="macos"
 OUTPUT=""
 EDITOR_VERSION=""
 LOG_FILE=""
+BOOTSTRAP=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -38,6 +39,10 @@ while [[ $# -gt 0 ]]; do
         --log)
             LOG_FILE="$2"
             shift 2
+            ;;
+        --bootstrap|--bootstrap-scene)
+            BOOTSTRAP=1
+            shift
             ;;
         -h|--help)
             grep '^# ' "$0" | sed 's/^# \{0,1\}//'
@@ -128,7 +133,30 @@ echo "[build] target       : $TARGET_FLAG"
 echo "[build] output       : $OUTPUT"
 echo "[build] log          : $LOG_FILE"
 echo "[build] project      : $SCRIPT_DIR"
+echo "[build] bootstrap    : $([[ $BOOTSTRAP -eq 1 ]] && echo yes || echo no)"
 echo ""
+
+if [[ $BOOTSTRAP -eq 1 ]]; then
+    BOOTSTRAP_LOG="${LOG_FILE%.log}.bootstrap.log"
+    echo "[build] running AutoSceneBuilder (log: $BOOTSTRAP_LOG)"
+    set +e
+    "$UNITY_BIN" \
+        -batchmode \
+        -nographics \
+        -quit \
+        -projectPath "$SCRIPT_DIR" \
+        -executeMethod ChaosOne.EditorScripts.AutoSceneBuilder.Create \
+        -logFile "$BOOTSTRAP_LOG"
+    bootstrap_status=$?
+    set -e
+    if [[ $bootstrap_status -ne 0 ]]; then
+        echo "[build] scene bootstrap failed (exit $bootstrap_status). Tail of $BOOTSTRAP_LOG:"
+        tail -n 40 "$BOOTSTRAP_LOG" || true
+        exit $bootstrap_status
+    fi
+    echo "[build] scene bootstrap complete"
+    echo ""
+fi
 
 set +e
 "$UNITY_BIN" \
