@@ -157,3 +157,11 @@ def test_ops_object_404_when_coa_missing(isolated_client: TestClient) -> None:
 def test_landing_includes_ops_link(isolated_client: TestClient) -> None:
     body = isolated_client.get("/").text
     assert "/ops" in body
+
+
+def test_ops_landing_includes_calm_channel(isolated_client: TestClient) -> None:
+    body = isolated_client.get("/ops").text
+    assert "calm__label" in body
+    assert "calm__feed" in body
+    assert "calm__entry--mode" in body
+    assert "calm__entry--auth" in body

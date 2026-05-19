@@ -195,7 +195,28 @@ _OPS_HTML = r"""<!doctype html>
         .sparkline__bar { flex: 1; background: rgba(201, 169, 97, 0.6); min-width: 2px; }
 
         .empty { color: rgba(232, 226, 208, 0.42); font-size: 11px; letter-spacing: 1px; }
-        .footer { padding: 16px 24px; color: rgba(232, 226, 208, 0.32); font-size: 10px; letter-spacing: 1px; }
+
+        .calm {
+            position: sticky; bottom: 0;
+            background: rgba(10, 22, 40, 0.96);
+            border-top: 1px solid var(--gold-dim);
+            padding: 8px 24px;
+            display: flex; align-items: center; gap: 12px;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 11px;
+            overflow: hidden;
+        }
+        .calm__label { color: var(--gold); font-weight: 700; letter-spacing: 3px; }
+        .calm__sep { width: 1px; height: 12px; background: var(--gold-dim); }
+        .calm__feed { display: flex; gap: 24px; overflow: hidden; }
+        .calm__entry { color: rgba(232, 226, 208, 0.62); white-space: nowrap; }
+        .calm__entry--mode { color: var(--amber); }
+        .calm__entry--auth { color: var(--green); }
+        .calm__entry--obj  { color: rgba(232, 226, 208, 0.85); }
+        .calm__entry--exp  { color: rgba(232, 226, 208, 0.45); }
+        .calm__entry--new  { color: var(--gold); }
+
+        .footer { padding: 16px 24px 56px 24px; color: rgba(232, 226, 208, 0.32); font-size: 10px; letter-spacing: 1px; }
         a { color: var(--gold); text-decoration: none; }
         a:hover { text-decoration: underline; }
     </style>
@@ -231,6 +252,12 @@ _OPS_HTML = r"""<!doctype html>
         <a href="/engagements">/engagements</a> &nbsp;·&nbsp;
         <a href="/health">/health</a> &nbsp;·&nbsp;
         <a href="/docs">/docs</a>
+    </div>
+
+    <div class="calm">
+        <span class="calm__label">LOG</span>
+        <span class="calm__sep"></span>
+        <div class="calm__feed" id="calm-feed"></div>
     </div>
 
     <script>
@@ -346,18 +373,54 @@ _OPS_HTML = r"""<!doctype html>
             rerenderCoas();
         }
 
+        const calmFeed = document.getElementById('calm-feed');
+        const CALM_MAX = 12;
+
+        function calmAppend(text, cls) {
+            const entry = document.createElement('span');
+            entry.className = `calm__entry ${cls || ''}`;
+            const stamp = new Date().toISOString().substring(11, 19);
+            entry.textContent = `${stamp} · ${text}`;
+            calmFeed.appendChild(entry);
+            while (calmFeed.children.length > CALM_MAX) {
+                calmFeed.removeChild(calmFeed.firstChild);
+            }
+        }
+
         const source = new EventSource('/ops/stream');
 
         source.addEventListener('snapshot', e => applySnapshot(JSON.parse(e.data)));
-        source.addEventListener('mode_changed', e => renderMode(JSON.parse(e.data).current));
+        source.addEventListener('mode_changed', e => {
+            const data = JSON.parse(e.data);
+            renderMode(data.current);
+            calmAppend(`mode ${data.previous} → ${data.current}`, 'calm__entry--mode');
+        });
         source.addEventListener('coa_proposed', e => {
             const coa = JSON.parse(e.data).coa;
             coaMap.set(coa.id, coa);
             rerenderCoas();
+            const tag = coa.is_recommended ? 'recommended' : 'alternative';
+            calmAppend(`coa proposed ${coa.id} (${tag})`, 'calm__entry--new');
         });
-        source.addEventListener('coa_authorized', e => { coaMap.delete(JSON.parse(e.data).id); rerenderCoas(); });
-        source.addEventListener('coa_objected',  e => { coaMap.delete(JSON.parse(e.data).id); rerenderCoas(); });
-        source.addEventListener('coa_expired',   e => { coaMap.delete(JSON.parse(e.data).id); rerenderCoas(); });
+        source.addEventListener('coa_authorized', e => {
+            const data = JSON.parse(e.data);
+            coaMap.delete(data.id);
+            rerenderCoas();
+            calmAppend(`coa authorized ${data.id} via ${data.source || 'operator'}`, 'calm__entry--auth');
+        });
+        source.addEventListener('coa_objected',  e => {
+            const data = JSON.parse(e.data);
+            coaMap.delete(data.id);
+            rerenderCoas();
+            calmAppend(`coa objected ${data.id} — ${data.reason || 'no reason'}`, 'calm__entry--obj');
+        });
+        source.addEventListener('coa_expired',   e => {
+            const data = JSON.parse(e.data);
+            coaMap.delete(data.id);
+            rerenderCoas();
+            const note = data.auto_authorized ? 'auto-authorized on expiry' : 'expired without action';
+            calmAppend(`coa expired ${data.id} — ${note}`, 'calm__entry--exp');
+        });
         source.addEventListener('coa_tick',      e => tickCountdowns(JSON.parse(e.data).remaining));
         source.addEventListener('adversary_updated', e => renderAdversary(JSON.parse(e.data)));
 
