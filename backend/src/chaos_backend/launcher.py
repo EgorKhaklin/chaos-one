@@ -146,7 +146,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return
         if not args.no_browser:
-            url = f"http://{args.host}:{args.port}/"
+            # Open the battlespace canvas directly — that's the primary
+            # operator surface. The audit dashboard remains one click away
+            # from the landing page or via /.
+            url = f"http://{args.host}:{args.port}/battlespace"
             print(f"[launcher] opening {url}", file=sys.stderr)
             webbrowser.open(url)
         if unity_app is not None:

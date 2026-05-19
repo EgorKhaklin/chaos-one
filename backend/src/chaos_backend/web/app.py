@@ -44,6 +44,7 @@ from chaos_backend.simulation.scenario_runner import run as run_scenario
 from chaos_backend.simulation.scenario_runner import stream_scenario
 from chaos_backend.simulation.scenarios import ScenarioKind, build
 from chaos_backend.storage import EngagementRepository, default_database_path
+from chaos_backend.web.battlespace import build_router as build_battlespace_router
 from chaos_backend.web.operations import build_router as build_operations_router
 
 _LANDING_HTML = """<!doctype html>
@@ -243,6 +244,7 @@ _LANDING_HTML = """<!doctype html>
     {recent_engagements}
 
     <div class="meta">
+        <a href="/battlespace">/battlespace</a> &nbsp;·&nbsp;
         <a href="/ops">/ops</a> &nbsp;·&nbsp;
         <a href="/health">/health</a> &nbsp;·&nbsp;
         <a href="/version">/version</a> &nbsp;·&nbsp;
@@ -357,6 +359,7 @@ def build_app(
 
     application.add_middleware(RequestLoggingMiddleware)
     application.include_router(build_operations_router(operations_state))
+    application.include_router(build_battlespace_router())
 
     repo = repository or EngagementRepository(
         database_path=Path(os.environ.get("CHAOS_DB_PATH") or default_database_path())
