@@ -1,0 +1,128 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: chaos-one-linux-x86_64
+            binary: chaos-one
+          - os: macos-latest
+            artifact: chaos-one-macos-arm64
+            binary: chaos-one
+          - os: windows-latest
+            artifact: chaos-one-windows-x86_64
+            binary: chaos-one.exe
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install backend with dev and package extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,package]"
+
+      - name: Generate gRPC stubs
+        run: |
+          mkdir -p src/chaos_backend/generated
+          bash scripts/generate_protos.sh
+
+      - name: Build with PyInstaller
+        run: pyinstaller --clean --noconfirm chaos-one.spec
+
+      - name: Verify the binary boots and responds (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x dist/${{ matrix.binary }}
+          ./dist/${{ matrix.binary }} --port 18123 --no-browser &
+          launcher_pid=$!
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18123/health > /dev/null 2>&1; then
+              echo "launcher responded on attempt $i"
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:18123/health
+          curl -sf http://127.0.0.1:18123/version
+          kill $launcher_pid 2>/dev/null || true
+
+      - name: Verify the binary boots and responds (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath "dist\${{ matrix.binary }}" `
+            -ArgumentList "--port","18123","--no-browser" `
+            -PassThru -WindowStyle Hidden
+          for ($i = 1; $i -le 30; $i++) {
+            try {
+              $resp = Invoke-WebRequest -Uri "http://127.0.0.1:18123/health" -UseBasicParsing -TimeoutSec 2
+              if ($resp.StatusCode -eq 200) { Write-Host "launcher responded on attempt $i"; break }
+            } catch { Start-Sleep -Seconds 1 }
+          }
+          Invoke-WebRequest -Uri "http://127.0.0.1:18123/health" -UseBasicParsing
+          Invoke-WebRequest -Uri "http://127.0.0.1:18123/version" -UseBasicParsing
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Package the binary
+        if: runner.os != 'Windows'
+        run: |
+          cd dist
+          tar -czf ../${{ matrix.artifact }}.tar.gz ${{ matrix.binary }}
+          ls -lh ../${{ matrix.artifact }}.tar.gz
+
+      - name: Package the binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist\${{ matrix.binary }}" -DestinationPath "${{ matrix.artifact }}.zip"
+          Get-ChildItem "${{ matrix.artifact }}.zip"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: backend/${{ matrix.artifact }}.*
+          if-no-files-found: error
+
+  release:
+    name: attach to GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Attach archives to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
