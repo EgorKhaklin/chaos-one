@@ -445,6 +445,52 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         .stats__v--ok   { color: rgb(150, 220, 160); }
         .stats__v--warn { color: rgb(220, 160, 60); }
 
+        /* ─── Weapons bay (above calm channel) ─── */
+        .bay {
+            bottom: 32px; left: 50%;
+            transform: translateX(-50%);
+            display: flex; gap: 10px;
+            padding: 8px 14px;
+            background: rgba(8, 18, 32, 0.86);
+            border-top: 1px solid var(--rule);
+            border-left: 1px solid var(--rule);
+            border-right: 1px solid var(--rule);
+            backdrop-filter: blur(6px);
+        }
+        .bay__slot {
+            min-width: 96px;
+            padding: 4px 8px 6px;
+            border-left: 2px solid var(--bone-dimmer);
+        }
+        .bay__slot--depleted { border-left-color: rgba(220, 80, 80, 0.65); }
+        .bay__slot--firing   { border-left-color: var(--amber); }
+        .bay__row {
+            display: flex; justify-content: space-between; align-items: baseline;
+            font-size: 9px;
+            letter-spacing: 1.5px;
+            font-variant-numeric: tabular-nums;
+        }
+        .bay__id {
+            color: var(--gold);
+            font-weight: 800;
+        }
+        .bay__count {
+            color: var(--bone);
+            font-weight: 800;
+            font-size: 12px;
+            transition: color var(--t-fast);
+        }
+        .bay__bar {
+            height: 3px;
+            margin-top: 4px;
+            background: rgba(232, 226, 208, 0.10);
+        }
+        .bay__bar-fill {
+            height: 100%;
+            background: var(--gold);
+            transition: width var(--t-fast);
+        }
+
         /* ─── Watermark ─── */
         .wm {
             bottom: 44px; right: 320px;
@@ -495,6 +541,25 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         <div class="cost">
             <div class="cost__lbl" id="costLabel">COST IMPOSITION +13% ADV</div>
             <div class="cost__spark" id="costSpark"></div>
+        </div>
+    </div>
+
+    <div class="overlay bay">
+        <div class="bay__slot" data-eff="NGI">
+            <div class="bay__row"><span class="bay__id">NGI</span><span class="bay__count">22</span></div>
+            <div class="bay__bar"><div class="bay__bar-fill" style="width:88%"></div></div>
+        </div>
+        <div class="bay__slot" data-eff="SM-3">
+            <div class="bay__row"><span class="bay__id">SM-3</span><span class="bay__count">48</span></div>
+            <div class="bay__bar"><div class="bay__bar-fill" style="width:96%"></div></div>
+        </div>
+        <div class="bay__slot" data-eff="PAC-3">
+            <div class="bay__row"><span class="bay__id">PAC-3</span><span class="bay__count">320</span></div>
+            <div class="bay__bar"><div class="bay__bar-fill" style="width:100%"></div></div>
+        </div>
+        <div class="bay__slot" data-eff="HEL">
+            <div class="bay__row"><span class="bay__id">HEL</span><span class="bay__count">1.2 MJ</span></div>
+            <div class="bay__bar"><div class="bay__bar-fill" style="width:80%"></div></div>
         </div>
     </div>
 
@@ -1293,6 +1358,24 @@ function drawEngagementAllocations() {
 // ═════════════════════════════════════════════════════════════════════
 //   LAYER: tracks (glowing kinetic markers)
 // ═════════════════════════════════════════════════════════════════════
+// Draws four L-shaped corner brackets around (cx, cy) at half-size `s`,
+// stroke `col` and length `len`. Used as a "track locked" frame around
+// each threat — replaces a closed rectangle for a less-busy military look.
+function drawCornerBrackets(cx, cy, s, len, col, width) {
+    ctx.strokeStyle = col;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    // top-left
+    ctx.moveTo(cx - s, cy - s + len); ctx.lineTo(cx - s, cy - s); ctx.lineTo(cx - s + len, cy - s);
+    // top-right
+    ctx.moveTo(cx + s - len, cy - s); ctx.lineTo(cx + s, cy - s); ctx.lineTo(cx + s, cy - s + len);
+    // bottom-right
+    ctx.moveTo(cx + s, cy + s - len); ctx.lineTo(cx + s, cy + s); ctx.lineTo(cx + s - len, cy + s);
+    // bottom-left
+    ctx.moveTo(cx - s + len, cy + s); ctx.lineTo(cx - s, cy + s); ctx.lineTo(cx - s, cy + s - len);
+    ctx.stroke();
+}
+
 function drawTracks() {
     for (const tr of TRACKS) {
         const p = trackPos(tr, clock.now);
@@ -1314,26 +1397,163 @@ function drawTracks() {
         ctx.arc(sp.sx, sp.sy, r * 0.55, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.strokeStyle = rgbStr(tr.color, 0.95);
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.arc(sp.sx, sp.sy, r * 1.05, 0, Math.PI * 2);
-        ctx.stroke();
+        // Corner-bracket "track locked" frame replaces the closed ring.
+        const bracketHalf = Math.max(10, r * 2.1);
+        const bracketLen  = Math.max(4, bracketHalf * 0.30);
+        drawCornerBrackets(sp.sx, sp.sy, bracketHalf, bracketLen, rgbStr(tr.color, 0.95), 1.2);
 
         // Priority badge
         ctx.fillStyle = 'rgba(10, 22, 40, 0.78)';
         ctx.strokeStyle = rgbStr(tr.color, 0.90);
         ctx.lineWidth = 1.0;
         ctx.beginPath();
-        ctx.arc(sp.sx - r * 1.4, sp.sy - r * 1.4, 8, 0, Math.PI * 2);
+        ctx.arc(sp.sx - bracketHalf - 4, sp.sy - bracketHalf - 4, 8, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
         ctx.fillStyle = rgbStr(tr.color, 0.95);
         ctx.font = '800 9px ui-monospace, "SF Mono", Menlo, monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(tr.priority), sp.sx - r * 1.4, sp.sy - r * 1.4);
+        ctx.fillText(String(tr.priority), sp.sx - bracketHalf - 4, sp.sy - bracketHalf - 4);
         ctx.textAlign = 'start';
+    }
+}
+
+// ─── Scanning radar sweep (top-left inset, under the classification bar) ───
+// Centre and radius are computed at render time so the inset always sits
+// in the same screen position regardless of canvas resize.
+function drawRadarSweep() {
+    const cx = 120;
+    const cy = 200;
+    const R  = 64;
+    // outer circle + inner range steps
+    ctx.strokeStyle = 'rgba(150, 220, 160, 0.32)';
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(150, 220, 160, 0.16)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, R * 0.66, 0, Math.PI * 2);
+    ctx.moveTo(cx + R * 0.33, cy);
+    ctx.arc(cx, cy, R * 0.33, 0, Math.PI * 2);
+    ctx.stroke();
+    // crosshair
+    ctx.beginPath();
+    ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy);
+    ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
+    ctx.stroke();
+
+    // sweep — 720°/s = 4°/frame at 60Hz; phase taken from clock so the
+    // sweep is deterministic when frozen.
+    const sweepAngle = (clock.now * Math.PI * 0.9) % (Math.PI * 2);
+    const sweepArc = ctx.createConicGradient(sweepAngle - Math.PI / 2, cx, cy);
+    sweepArc.addColorStop(0.00, 'rgba(150, 220, 160, 0.55)');
+    sweepArc.addColorStop(0.08, 'rgba(150, 220, 160, 0.18)');
+    sweepArc.addColorStop(0.20, 'rgba(150, 220, 160, 0.00)');
+    sweepArc.addColorStop(1.00, 'rgba(150, 220, 160, 0.00)');
+    ctx.fillStyle = sweepArc;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.fill();
+    // crisp leading edge
+    ctx.strokeStyle = 'rgba(150, 220, 160, 0.85)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(sweepAngle - Math.PI / 2) * R, cy + Math.sin(sweepAngle - Math.PI / 2) * R);
+    ctx.stroke();
+
+    // blips: project each track's ground position into the radar's
+    // top-down frame, scaled so 12.5km maps to R.
+    for (const tr of TRACKS) {
+        const p = trackPos(tr, clock.now);
+        const range = Math.hypot(p[0], p[2]);
+        if (range > 13_000) continue;
+        const bearing = Math.atan2(p[0], p[2]);   // 0 = +Z (north)
+        const bx = cx + Math.sin(bearing) * (range / 12_500) * R;
+        const by = cy - Math.cos(bearing) * (range / 12_500) * R;
+        ctx.fillStyle = rgbStr(tr.color, 0.95);
+        ctx.beginPath();
+        ctx.arc(bx, by, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // label
+    ctx.fillStyle = 'rgba(150, 220, 160, 0.85)';
+    ctx.font = '700 8px ui-monospace, "SF Mono", Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('RADAR · 12.5 km', cx, cy + R + 12);
+    ctx.textAlign = 'start';
+}
+
+// ─── Compass tape (top, between classbar and stage) ───
+// Sliding tick marks centered on the camera's current ground-plane
+// bearing toward (0, 0, 0). Reads in degrees clockwise from north.
+function drawCompassTape() {
+    const tapeY = 56;             // just below the classification banner
+    const tapeH = 22;
+    const tapeW = Math.min(720, proj.w - 360);
+    const cx = proj.w / 2;
+    const x0 = cx - tapeW / 2;
+
+    // background
+    ctx.fillStyle = 'rgba(8, 18, 32, 0.72)';
+    ctx.fillRect(x0, tapeY, tapeW, tapeH);
+    ctx.strokeStyle = 'rgba(201, 169, 97, 0.32)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(snap(x0), snap(tapeY), tapeW, tapeH);
+
+    // The camera's bearing: it sits at angle `cam.angle` around the
+    // origin, so the heading from camera to origin is angle + π
+    // (camera looks "toward" origin). Modulo 360°, expressed as degrees
+    // clockwise from north (= +Z axis).
+    const bearingRad = cam.angle + Math.PI;
+    const bearingDeg = ((bearingRad * 180 / Math.PI) % 360 + 360) % 360;
+
+    // Show ticks for every 10° within ±60° of current bearing.
+    const pxPerDeg = tapeW / 120;
+    ctx.textAlign = 'center';
+    for (let d = -60; d <= 60; d += 10) {
+        const heading = ((bearingDeg + d) % 360 + 360) % 360;
+        const tx = cx + d * pxPerDeg;
+        const isMajor = heading % 30 === 0;
+        ctx.strokeStyle = isMajor ? 'rgba(232, 226, 208, 0.78)' : 'rgba(232, 226, 208, 0.38)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(snap(tx), tapeY + 4);
+        ctx.lineTo(snap(tx), tapeY + (isMajor ? 12 : 8));
+        ctx.stroke();
+        if (isMajor) {
+            ctx.fillStyle = 'rgba(232, 226, 208, 0.85)';
+            ctx.font = '700 9px ui-monospace, "SF Mono", Menlo, monospace';
+            ctx.fillText(String(Math.round(heading)).padStart(3, '0'), tx, tapeY + tapeH - 3);
+        }
+    }
+    ctx.textAlign = 'start';
+
+    // Current-heading caret
+    ctx.fillStyle = 'rgba(201, 169, 97, 1)';
+    ctx.beginPath();
+    ctx.moveTo(cx, tapeY + tapeH + 5);
+    ctx.lineTo(cx - 5, tapeY + tapeH);
+    ctx.lineTo(cx + 5, tapeY + tapeH);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(201, 169, 97, 0.95)';
+    ctx.font = '800 9.5px ui-monospace, "SF Mono", Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`HDG ${String(Math.round(bearingDeg)).padStart(3, '0')}°`, cx, tapeY + tapeH + 17);
+    ctx.textAlign = 'start';
+}
+
+// ─── Subtle scanlines ───
+// Single-pixel dark lines every 3 px at very low opacity. Sells the
+// "tactical display" feel without the crunchy CRT look.
+function drawScanlines() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
+    for (let y = 0; y < proj.h; y += 3) {
+        ctx.fillRect(0, y, proj.w, 1);
     }
 }
 
@@ -1549,6 +1769,46 @@ function renderCalm() {
     document.getElementById('calmList').innerHTML = ordered.map(s => `<span>${s}</span>`).join('');
 }
 
+// ─── Weapons bay state — magazines drop when COA-B is authorized ─────
+const BAY_BASE = {
+    'NGI':   { count: 22,  max: 25,  fmt: (v) => String(v) },
+    'SM-3':  { count: 48,  max: 50,  fmt: (v) => String(v) },
+    'PAC-3': { count: 320, max: 320, fmt: (v) => String(v) },
+    'HEL':   { count: 1.2, max: 1.5, fmt: (v) => v.toFixed(1) + ' MJ' },
+};
+let lastBayState = '';
+function renderBay() {
+    const t = cyclePhase();
+    const authorized = (t >= 14 && t < 24);    // COA-B authorize → restore at end of cycle
+    const firing     = (t >= 14 && t < 17);    // brief firing window
+    const ngiCount   = BAY_BASE['NGI'].count - (authorized ? 2 : 0);
+    const helEnergy  = BAY_BASE['HEL'].count - (authorized ? 0.4 : 0);
+    const values = {
+        'NGI':   ngiCount,
+        'SM-3':  BAY_BASE['SM-3'].count,
+        'PAC-3': BAY_BASE['PAC-3'].count,
+        'HEL':   helEnergy,
+    };
+    const sig = `${authorized}|${firing}|${ngiCount.toFixed(2)}|${helEnergy.toFixed(2)}`;
+    if (sig === lastBayState) return;
+    lastBayState = sig;
+
+    for (const id of Object.keys(BAY_BASE)) {
+        const slot = document.querySelector(`.bay__slot[data-eff="${id}"]`);
+        if (!slot) continue;
+        const base = BAY_BASE[id];
+        const v = values[id];
+        slot.querySelector('.bay__count').textContent = base.fmt(v);
+        slot.querySelector('.bay__bar-fill').style.width = ((v / base.max) * 100).toFixed(1) + '%';
+        slot.classList.remove('bay__slot--depleted', 'bay__slot--firing');
+        if (firing && (id === 'NGI' || id === 'HEL')) {
+            slot.classList.add('bay__slot--firing');
+        } else if (authorized && id === 'NGI') {
+            slot.classList.add('bay__slot--depleted');
+        }
+    }
+}
+
 function renderStats() {
     const t = cyclePhase();
     const engaging = (t >= 8 && t < 21) ? ENGAGEMENT_ALLOC.length : 0;
@@ -1614,6 +1874,9 @@ function frame(ts) {
     drawTrails();
     drawEngagementAllocations();
     drawTracks();
+    drawCompassTape();
+    drawRadarSweep();
+    drawScanlines();
     positionCallouts();
 
     const t = cyclePhase();
@@ -1621,6 +1884,7 @@ function frame(ts) {
     renderDecisions(t);
     renderAdversary(clock.now);
     renderStats();
+    renderBay();
     renderCalm();
 
     requestAnimationFrame(frame);
