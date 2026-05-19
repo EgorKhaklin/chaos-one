@@ -39,10 +39,12 @@ from chaos_backend.audit import (
     render_html_from_path,
 )
 from chaos_backend.observability import RequestLoggingMiddleware, configure_logging
+from chaos_backend.operations import OperationsDriver, OperationsState
 from chaos_backend.simulation.scenario_runner import run as run_scenario
 from chaos_backend.simulation.scenario_runner import stream_scenario
 from chaos_backend.simulation.scenarios import ScenarioKind, build
 from chaos_backend.storage import EngagementRepository, default_database_path
+from chaos_backend.web.operations import build_router as build_operations_router
 
 _LANDING_HTML = """<!doctype html>
 <html lang="en">
@@ -241,6 +243,7 @@ _LANDING_HTML = """<!doctype html>
     {recent_engagements}
 
     <div class="meta">
+        <a href="/ops">/ops</a> &nbsp;·&nbsp;
         <a href="/health">/health</a> &nbsp;·&nbsp;
         <a href="/version">/version</a> &nbsp;·&nbsp;
         <a href="/engagements">/engagements</a> &nbsp;·&nbsp;
@@ -324,18 +327,36 @@ def build_app(
     repository: EngagementRepository | None = None,
     log_directory: Path | None = None,
     configure_observability: bool = True,
+    start_operations_driver: bool = True,
 ) -> FastAPI:
     if configure_observability:
         configure_logging(level=os.environ.get("CHAOS_LOG_LEVEL", "INFO"))
+
+    operations_state = OperationsState()
+    operations_driver = OperationsDriver(operations_state) if start_operations_driver else None
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
+        if operations_driver is not None:
+            await operations_driver.start()
+        try:
+            yield
+        finally:
+            if operations_driver is not None:
+                await operations_driver.stop()
 
     application = FastAPI(
         title="Chaos One Dashboard",
         version=__version__,
         docs_url="/docs",
         redoc_url=None,
+        lifespan=lifespan,
     )
 
     application.add_middleware(RequestLoggingMiddleware)
+    application.include_router(build_operations_router(operations_state))
 
     repo = repository or EngagementRepository(
         database_path=Path(os.environ.get("CHAOS_DB_PATH") or default_database_path())
