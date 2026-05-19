@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
+from chaos_backend.storage import EngagementRepository
 from chaos_backend.web import build_app
 
 
 def _client() -> TestClient:
     return TestClient(build_app())
+
+
+@pytest.fixture
+def isolated_client(tmp_path: Path) -> TestClient:
+    repo = EngagementRepository(database_path=tmp_path / "engagements.db")
+    repo.init()
+    return TestClient(
+        build_app(repository=repo, log_directory=tmp_path / "audit"),
+    )
 
 
 def test_health_returns_ok() -> None:
@@ -87,3 +100,58 @@ def test_landing_includes_stream_button_and_event_source_js() -> None:
     body = _client().get("/").text
     assert 'id="stream-btn"' in body
     assert "EventSource" in body
+
+
+def test_engagements_list_is_empty_initially(isolated_client: TestClient) -> None:
+    response = isolated_client.get("/engagements")
+    assert response.status_code == 200
+    assert response.json() == {"count": 0, "engagements": []}
+
+
+def test_play_records_and_engagements_lists_it(isolated_client: TestClient) -> None:
+    play_response = isolated_client.post(
+        "/play",
+        data={"scenario": "peer_salvo", "seed": "42"},
+    )
+    assert play_response.status_code == 200
+
+    listing = isolated_client.get("/engagements").json()
+    assert listing["count"] == 1
+    record = listing["engagements"][0]
+    assert record["scenario"] == "peer_salvo"
+    assert record["seed"] == 42
+    assert record["verified"] is True
+
+
+def test_engagement_detail_round_trips(isolated_client: TestClient) -> None:
+    isolated_client.post("/play", data={"scenario": "regional_crisis", "seed": "9"})
+    listing = isolated_client.get("/engagements").json()
+    record = listing["engagements"][0]
+
+    detail = isolated_client.get(f"/engagements/{record['id']}").json()
+    assert detail["id"] == record["id"]
+    assert detail["scenario"] == "regional_crisis"
+
+
+def test_engagement_audit_html_renders_from_stored_log(isolated_client: TestClient) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "1"})
+    record = isolated_client.get("/engagements").json()["engagements"][0]
+
+    html_response = isolated_client.get(f"/engagements/{record['id']}/audit.html")
+    assert html_response.status_code == 200
+    assert "AUDIT REEL" in html_response.text
+    assert "CHAIN VERIFIED" in html_response.text
+
+
+def test_engagement_detail_404_for_unknown_id(isolated_client: TestClient) -> None:
+    response = isolated_client.get("/engagements/eng_nope")
+    assert response.status_code == 404
+
+
+def test_landing_shows_recent_engagements_table_after_run(
+    isolated_client: TestClient,
+) -> None:
+    isolated_client.post("/play", data={"scenario": "peer_salvo", "seed": "2"})
+    body = isolated_client.get("/").text
+    assert "RECENT ENGAGEMENTS" in body
+    assert "peer_salvo" in body

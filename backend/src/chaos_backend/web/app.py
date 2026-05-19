@@ -14,20 +14,22 @@ HTML that the CLI's `audit html` subcommand produces.
 from __future__ import annotations
 
 import json
-import tempfile
+import os
 from collections.abc import AsyncIterator
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from chaos_backend import __version__
-from chaos_backend.audit import render_html_from_path
+from chaos_backend.audit import AuditLogReader, AuditLogVerifier, render_html_from_path
 from chaos_backend.simulation.scenario_runner import run as run_scenario
 from chaos_backend.simulation.scenario_runner import stream_scenario
 from chaos_backend.simulation.scenarios import ScenarioKind, build
+from chaos_backend.storage import EngagementRepository, default_database_path
 
 _LANDING_HTML = """<!doctype html>
 <html lang="en">
@@ -135,6 +137,27 @@ _LANDING_HTML = """<!doctype html>
         @keyframes flash { from { background: rgba(201, 169, 97, 0.18); } to { background: transparent; } }
         tr.fresh { animation: flash 800ms ease-out; }
 
+        .engagements {
+            margin-top: 36px;
+            max-width: 1200px;
+            padding: 16px;
+            background: rgba(16, 28, 48, 0.55);
+            border-left: 2px solid rgba(201, 169, 97, 0.55);
+        }
+        .engagements__title {
+            color: #C9A961;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 4px;
+            margin-bottom: 12px;
+        }
+        .engagements__empty {
+            margin-top: 24px;
+            color: rgba(232, 226, 208, 0.50);
+            font-size: 11px;
+            letter-spacing: 1px;
+        }
+
         .meta {
             margin-top: 36px;
             color: rgba(232, 226, 208, 0.40);
@@ -183,9 +206,12 @@ _LANDING_HTML = """<!doctype html>
         </table>
     </div>
 
+    {recent_engagements}
+
     <div class="meta">
         <a href="/health">/health</a> &nbsp;·&nbsp;
         <a href="/version">/version</a> &nbsp;·&nbsp;
+        <a href="/engagements">/engagements</a> &nbsp;·&nbsp;
         <a href="/docs">/docs</a> &nbsp;·&nbsp;
         <a href="https://github.com/EgorKhaklin/chaos-one" target="_blank">repo</a>
     </div>
@@ -261,7 +287,11 @@ def _scenario_options() -> str:
     return "\n".join(f'<option value="{k.value}">{k.value}</option>' for k in ScenarioKind)
 
 
-def build_app() -> FastAPI:
+def build_app(
+    *,
+    repository: EngagementRepository | None = None,
+    log_directory: Path | None = None,
+) -> FastAPI:
     application = FastAPI(
         title="Chaos One Dashboard",
         version=__version__,
@@ -269,10 +299,22 @@ def build_app() -> FastAPI:
         redoc_url=None,
     )
 
+    repo = repository or EngagementRepository(
+        database_path=Path(os.environ.get("CHAOS_DB_PATH") or default_database_path())
+    )
+    repo.init()
+
+    logs_dir = log_directory or Path(
+        os.environ.get("CHAOS_LOG_DIR") or (Path.home() / ".chaos-one" / "audit")
+    )
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
     @application.get("/", response_class=HTMLResponse)
     def landing() -> str:
-        return _LANDING_HTML.replace("{version}", __version__).replace(
-            "{scenario_options}", _scenario_options()
+        return (
+            _LANDING_HTML.replace("{version}", __version__)
+            .replace("{scenario_options}", _scenario_options())
+            .replace("{recent_engagements}", _render_recent_engagements(repo))
         )
 
     @application.get("/health")
@@ -325,17 +367,47 @@ def build_app() -> FastAPI:
             )
 
         scenario_obj = build(kind, seed=seed)
+        log_path = logs_dir / _engagement_filename(kind.value, seed)
 
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".jsonl",
-            delete=False,
-            prefix=f"chaos_{kind.value}_seed{seed}_",
-        ) as handle:
-            log_path = Path(handle.name)
+        started_at = datetime.now(UTC)
+        result = run_scenario(scenario_obj, log_path=log_path, realtime=False)
+        ended_at = datetime.now(UTC)
 
-        run_scenario(scenario_obj, log_path=log_path, realtime=False)
+        verification = AuditLogVerifier.verify(AuditLogReader.load(log_path))
+        repo.insert(
+            scenario=kind.value,
+            seed=seed,
+            started_at=started_at,
+            ended_at=ended_at,
+            events=result.events_emitted,
+            verified=verification.valid,
+            log_path=str(log_path),
+        )
         return HTMLResponse(content=render_html_from_path(log_path))
+
+    @application.get("/engagements")
+    def engagements(limit: int = 20) -> dict[str, Any]:
+        records = repo.recent(limit=limit)
+        return {
+            "count": len(records),
+            "engagements": [asdict(r) for r in records],
+        }
+
+    @application.get("/engagements/{engagement_id}")
+    def engagement_detail(engagement_id: str) -> dict[str, Any]:
+        record = repo.get(engagement_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="engagement not found")
+        return asdict(record)
+
+    @application.get("/engagements/{engagement_id}/audit.html", response_class=HTMLResponse)
+    def engagement_audit_html(engagement_id: str) -> HTMLResponse:
+        record = repo.get(engagement_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="engagement not found")
+        if not Path(record.log_path).exists():
+            raise HTTPException(status_code=410, detail="log file no longer on disk")
+        return HTMLResponse(content=render_html_from_path(record.log_path))
 
     @application.exception_handler(404)
     def not_found(_request: Any, _exc: Any) -> JSONResponse:
@@ -350,6 +422,48 @@ def _sse_frame(event: str, payload: dict[str, Any]) -> bytes:
 
 async def _sse_error(message: str) -> AsyncIterator[bytes]:
     yield _sse_frame("error", {"message": message})
+
+
+def _engagement_filename(scenario: str, seed: int) -> str:
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+    return f"{stamp}_{scenario}_seed{seed}.jsonl"
+
+
+def _render_recent_engagements(repo: EngagementRepository) -> str:
+    records = repo.recent(limit=10)
+    if not records:
+        return '<div class="engagements__empty">no engagements yet — run one above</div>'
+    rows = "\n".join(
+        f"""<tr>
+            <td class="seq"><a href="/engagements/{r.id}/audit.html">{r.id}</a></td>
+            <td class="t">{r.scenario}</td>
+            <td class="t">{r.seed}</td>
+            <td class="t">{r.events}</td>
+            <td class="t">{"OK" if r.verified else "BROKEN"}</td>
+            <td class="t">{r.started_at}</td>
+        </tr>"""
+        for r in records
+    )
+    return f"""
+<div class="engagements">
+    <div class="engagements__title">RECENT ENGAGEMENTS</div>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>SCENARIO</th>
+                <th>SEED</th>
+                <th>EVENTS</th>
+                <th>CHAIN</th>
+                <th>STARTED (UTC)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {rows}
+        </tbody>
+    </table>
+</div>
+"""
 
 
 app = build_app()
