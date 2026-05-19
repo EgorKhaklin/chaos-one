@@ -13,12 +13,14 @@ in tests).
 
 from __future__ import annotations
 
+import asyncio
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
 from chaos_backend.audit.log import AuditLogWriter
-from chaos_backend.simulation.scenarios import Scenario
+from chaos_backend.simulation.scenarios import Scenario, ScenarioEvent
 
 
 @dataclass(slots=True)
@@ -96,4 +98,77 @@ def run(
         seed=scenario.seed,
         events_emitted=emitted,
         log_path=target,
+    )
+
+
+@dataclass(slots=True)
+class StreamedEvent:
+    sequence: int
+    scenario_t: float
+    event_type: str
+    payload: dict[str, object]
+
+
+async def stream_scenario(
+    scenario: Scenario,
+    *,
+    speed: float = 1.0,
+    realtime: bool = True,
+) -> AsyncIterator[StreamedEvent]:
+    """Yield each scenario event as it would land in the audit log,
+    paced against wall clock.
+
+    Parameters
+    ----------
+    scenario:
+        The Scenario whose events to stream.
+    speed:
+        Real-time multiplier. speed=1.0 plays one scenario-second per
+        wall-clock-second. speed=10.0 plays 10x faster. speed<=0 falls
+        back to unmetered emission.
+    realtime:
+        When False, emit all events back-to-back with no awaits. Useful
+        for tests where wall-clock pacing would slow the suite.
+    """
+
+    sequence = 0
+    previous_event_t = 0.0
+
+    sequence += 1
+    yield StreamedEvent(
+        sequence=sequence,
+        scenario_t=0.0,
+        event_type="scenario_run_begin",
+        payload={
+            "kind": scenario.kind.value,
+            "seed": scenario.seed,
+            "duration_s": scenario.duration_s,
+        },
+    )
+
+    for event in scenario.events:
+        if realtime and speed > 0:
+            gap = max(0.0, event.timestamp_s - previous_event_t)
+            if gap > 0:
+                await asyncio.sleep(gap / speed)
+
+        sequence += 1
+        yield _to_streamed(sequence, event)
+        previous_event_t = event.timestamp_s
+
+    sequence += 1
+    yield StreamedEvent(
+        sequence=sequence,
+        scenario_t=previous_event_t,
+        event_type="scenario_run_end",
+        payload={"kind": scenario.kind.value, "events_emitted": sequence - 2},
+    )
+
+
+def _to_streamed(sequence: int, event: ScenarioEvent) -> StreamedEvent:
+    return StreamedEvent(
+        sequence=sequence,
+        scenario_t=event.timestamp_s,
+        event_type=event.event_type,
+        payload=dict(event.payload),
     )

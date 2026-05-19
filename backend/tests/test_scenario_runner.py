@@ -87,3 +87,47 @@ def test_cli_play_rejects_unknown_kind(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exc:
         main(["play", "not_a_real_kind", "--output", str(log_path)])
     assert exc.value.code == 2
+
+
+async def test_stream_scenario_yields_begin_events_end_in_order() -> None:
+    from chaos_backend.simulation.scenario_runner import stream_scenario
+
+    scenario = build(ScenarioKind.PEER_SALVO, seed=99)
+
+    streamed = []
+    async for event in stream_scenario(scenario, realtime=False):
+        streamed.append(event)
+
+    assert streamed[0].event_type == "scenario_run_begin"
+    assert streamed[-1].event_type == "scenario_run_end"
+    assert len(streamed) == len(scenario.events) + 2
+    sequences = [event.sequence for event in streamed]
+    assert sequences == list(range(1, len(streamed) + 1))
+
+
+async def test_stream_scenario_realtime_speed_paces_emissions() -> None:
+    import time
+
+    from chaos_backend.simulation.scenario_runner import stream_scenario
+
+    # Build a small scenario manually so wall-clock pacing is bounded.
+    from chaos_backend.simulation.scenarios import Scenario, ScenarioEvent
+
+    scenario = Scenario(
+        kind=ScenarioKind.PEER_SALVO,
+        seed=0,
+        duration_s=2.0,
+        events=[
+            ScenarioEvent(0.0, "tick"),
+            ScenarioEvent(1.0, "tick"),
+        ],
+    )
+
+    start = time.perf_counter()
+    async for _ in stream_scenario(scenario, speed=100.0, realtime=True):
+        pass
+    elapsed = time.perf_counter() - start
+
+    # At 100x speed, a 1-second gap takes ~0.01 wall-clock. Loose ceiling
+    # to absorb scheduler jitter.
+    assert elapsed < 0.5

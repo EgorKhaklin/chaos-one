@@ -13,16 +13,20 @@ HTML that the CLI's `audit html` subcommand produces.
 
 from __future__ import annotations
 
+import json
 import tempfile
+from collections.abc import AsyncIterator
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from chaos_backend import __version__
 from chaos_backend.audit import render_html_from_path
 from chaos_backend.simulation.scenario_runner import run as run_scenario
+from chaos_backend.simulation.scenario_runner import stream_scenario
 from chaos_backend.simulation.scenarios import ScenarioKind, build
 
 _LANDING_HTML = """<!doctype html>
@@ -58,7 +62,7 @@ _LANDING_HTML = """<!doctype html>
             padding: 20px;
             background: rgba(16, 28, 48, 0.55);
             border-left: 2px solid #C9A961;
-            max-width: 720px;
+            max-width: 760px;
         }
         .field { display: flex; flex-direction: column; gap: 6px; }
         label {
@@ -76,8 +80,6 @@ _LANDING_HTML = """<!doctype html>
             font-family: ui-monospace, "SF Mono", Menlo, monospace;
         }
         button {
-            background: #C9A961;
-            color: #0A1628;
             border: none;
             padding: 10px 22px;
             font-size: 11px;
@@ -85,7 +87,54 @@ _LANDING_HTML = """<!doctype html>
             letter-spacing: 3px;
             cursor: pointer;
         }
-        button:hover { background: #DCBC74; }
+        .btn-primary { background: #C9A961; color: #0A1628; }
+        .btn-primary:hover { background: #DCBC74; }
+        .btn-secondary {
+            background: rgba(232, 226, 208, 0.04);
+            color: rgba(232, 226, 208, 0.85);
+            border: 1px solid rgba(232, 226, 208, 0.25);
+        }
+        .btn-secondary:hover { background: rgba(232, 226, 208, 0.10); }
+
+        .stream {
+            margin-top: 36px;
+            max-width: 1200px;
+        }
+        .stream__status {
+            padding: 10px 16px;
+            font-size: 11px;
+            letter-spacing: 2px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            border-left: 2px solid;
+        }
+        .stream__status.idle      { border-color: rgba(232, 226, 208, 0.25); color: rgba(232, 226, 208, 0.55); }
+        .stream__status.streaming { border-color: #C9A961; color: #C9A961; }
+        .stream__status.done      { border-color: #96DCA0; color: #96DCA0; }
+        .stream__status.error     { border-color: #DC5050; color: #DC5050; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        th {
+            text-align: left;
+            color: #C9A961;
+            font-size: 9px;
+            letter-spacing: 2px;
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(201, 169, 97, 0.4);
+        }
+        td {
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(232, 226, 208, 0.08);
+            vertical-align: top;
+        }
+        td.seq { width: 56px; color: rgba(232, 226, 208, 0.55); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+        td.t   { width: 100px; color: rgba(232, 226, 208, 0.78); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+        td.type { width: 240px; color: #C9A961; font-weight: 700; letter-spacing: 1px; }
+        td.payload { color: rgba(232, 226, 208, 0.78); font-family: ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+
+        @keyframes flash { from { background: rgba(201, 169, 97, 0.18); } to { background: transparent; } }
+        tr.fresh { animation: flash 800ms ease-out; }
+
         .meta {
             margin-top: 36px;
             color: rgba(232, 226, 208, 0.40);
@@ -100,7 +149,7 @@ _LANDING_HTML = """<!doctype html>
     <h1>CHAOS ONE</h1>
     <div class="subtitle">post-engagement audit dashboard · v{version}</div>
 
-    <form method="post" action="/play">
+    <form id="run-form" method="post" action="/play">
         <div class="field">
             <label for="scenario">SCENARIO</label>
             <select id="scenario" name="scenario">
@@ -111,14 +160,98 @@ _LANDING_HTML = """<!doctype html>
             <label for="seed">SEED</label>
             <input id="seed" name="seed" type="number" value="42" min="0" />
         </div>
-        <button type="submit">RUN</button>
+        <div class="field">
+            <label for="speed">SPEED (live)</label>
+            <input id="speed" type="number" value="8" min="1" step="1" />
+        </div>
+        <button class="btn-primary" type="submit">RUN</button>
+        <button class="btn-secondary" type="button" id="stream-btn">STREAM</button>
     </form>
+
+    <div class="stream">
+        <div id="status" class="stream__status idle">IDLE</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>SEQ</th>
+                    <th>T (s)</th>
+                    <th>EVENT</th>
+                    <th>PAYLOAD</th>
+                </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+        </table>
+    </div>
 
     <div class="meta">
         <a href="/health">/health</a> &nbsp;·&nbsp;
         <a href="/version">/version</a> &nbsp;·&nbsp;
+        <a href="/docs">/docs</a> &nbsp;·&nbsp;
         <a href="https://github.com/EgorKhaklin/chaos-one" target="_blank">repo</a>
     </div>
+
+    <script>
+    (() => {
+        const status = document.getElementById('status');
+        const rows = document.getElementById('rows');
+        let source = null;
+
+        function setStatus(text, cls) {
+            status.textContent = text;
+            status.className = 'stream__status ' + cls;
+        }
+
+        function escape(s) {
+            return String(s).replace(/[&<>"']/g, (c) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
+
+        function appendRow(evt) {
+            const tr = document.createElement('tr');
+            tr.className = 'fresh';
+            const payload = JSON.stringify(evt.payload, null, 2);
+            tr.innerHTML = (
+                '<td class="seq">#' + String(evt.sequence).padStart(4, '0') + '</td>' +
+                '<td class="t">' + evt.scenario_t.toFixed(2) + '</td>' +
+                '<td class="type">' + escape(evt.event_type) + '</td>' +
+                '<td class="payload">' + escape(payload) + '</td>'
+            );
+            rows.appendChild(tr);
+        }
+
+        document.getElementById('stream-btn').addEventListener('click', () => {
+            if (source) { source.close(); source = null; }
+            rows.innerHTML = '';
+
+            const scenario = document.getElementById('scenario').value;
+            const seed = document.getElementById('seed').value;
+            const speed = document.getElementById('speed').value;
+
+            const url = '/play/stream?scenario=' + encodeURIComponent(scenario)
+                      + '&seed=' + encodeURIComponent(seed)
+                      + '&speed=' + encodeURIComponent(speed);
+
+            source = new EventSource(url);
+            setStatus('STREAMING ' + scenario + ' (seed ' + seed + ', ' + speed + 'x)', 'streaming');
+
+            source.addEventListener('audit', (e) => {
+                appendRow(JSON.parse(e.data));
+            });
+            source.addEventListener('done', (e) => {
+                const summary = JSON.parse(e.data);
+                setStatus('DONE · ' + summary.events + ' events', 'done');
+                source.close();
+                source = null;
+            });
+            source.addEventListener('error', () => {
+                setStatus('STREAM ERROR', 'error');
+                source.close();
+                source = null;
+            });
+        });
+    })();
+    </script>
 </body>
 </html>
 """
@@ -153,6 +286,34 @@ def build_app() -> FastAPI:
             "scenarios": [k.value for k in ScenarioKind],
         }
 
+    @application.get("/play/stream")
+    async def play_stream(
+        scenario: str,
+        seed: int = 42,
+        speed: float = 8.0,
+    ) -> StreamingResponse:
+        try:
+            kind = ScenarioKind(scenario)
+        except ValueError:
+            return StreamingResponse(
+                _sse_error(f"unknown scenario: {scenario}"),
+                media_type="text/event-stream",
+                status_code=400,
+            )
+
+        scenario_obj = build(kind, seed=seed)
+
+        async def event_source() -> AsyncIterator[bytes]:
+            async for streamed in stream_scenario(scenario_obj, speed=speed, realtime=True):
+                yield _sse_frame("audit", asdict(streamed))
+            yield _sse_frame("done", {"events": scenario_obj.events.__len__() + 2})
+
+        return StreamingResponse(
+            event_source(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @application.post("/play", response_class=HTMLResponse)
     def play(scenario: str = Form(...), seed: int = Form(42)) -> HTMLResponse:
         try:
@@ -181,6 +342,14 @@ def build_app() -> FastAPI:
         return JSONResponse(status_code=404, content={"error": "not found"})
 
     return application
+
+
+def _sse_frame(event: str, payload: dict[str, Any]) -> bytes:
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n".encode()
+
+
+async def _sse_error(message: str) -> AsyncIterator[bytes]:
+    yield _sse_frame("error", {"message": message})
 
 
 app = build_app()
