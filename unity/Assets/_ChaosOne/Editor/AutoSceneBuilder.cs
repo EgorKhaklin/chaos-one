@@ -113,6 +113,7 @@ namespace ChaosOne.EditorScripts
             vcam.Priority = 100;
             go.transform.position = new Vector3(0f, 1500f, -8000f);
             go.transform.rotation = Quaternion.Euler(8f, 0f, 0f);
+            go.AddComponent<OrbitalCamera>();
             return vcam;
         }
 
