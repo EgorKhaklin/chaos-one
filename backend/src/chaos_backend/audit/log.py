@@ -25,6 +25,7 @@ class AuditLogEntry:
     payload_json: str
     previous_hash: str
     hash: str
+    request_id: str = ""  # observability correlation id; empty for pre-v0.2 logs
 
 
 @dataclass(slots=True)
@@ -48,8 +49,15 @@ def _canonical_string(
     monotonic_ts: float,
     event_type: str,
     payload_json: str,
+    request_id: str = "",
 ) -> str:
-    return f"{previous_hash}|{sequence}|{monotonic_ts!r}|{event_type}|{payload_json}"
+    base = f"{previous_hash}|{sequence}|{monotonic_ts!r}|{event_type}|{payload_json}"
+    # Pre-v0.2 logs never carried a request_id; preserve their canonical
+    # form so verification of older audit files still passes. Newer logs
+    # opt into the extended canonical by setting a non-empty request_id.
+    if request_id:
+        return base + "|" + request_id
+    return base
 
 
 def _hash(
@@ -58,8 +66,11 @@ def _hash(
     monotonic_ts: float,
     event_type: str,
     payload_json: str,
+    request_id: str = "",
 ) -> str:
-    canonical = _canonical_string(previous_hash, sequence, monotonic_ts, event_type, payload_json)
+    canonical = _canonical_string(
+        previous_hash, sequence, monotonic_ts, event_type, payload_json, request_id
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -72,6 +83,7 @@ class AuditLogWriter:
     """
 
     path: Path
+    request_id: str = ""
     _previous_hash: str = field(default="")
     _sequence: int = field(default=0)
     _started_at: float = field(default_factory=time.perf_counter)
@@ -94,7 +106,14 @@ class AuditLogWriter:
         utc_iso = datetime.now(UTC).isoformat()
         payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
-        digest = _hash(self._previous_hash, self._sequence, monotonic, event_type, payload_json)
+        digest = _hash(
+            self._previous_hash,
+            self._sequence,
+            monotonic,
+            event_type,
+            payload_json,
+            self.request_id,
+        )
 
         entry = AuditLogEntry(
             sequence=self._sequence,
@@ -104,6 +123,7 @@ class AuditLogWriter:
             payload_json=payload_json,
             previous_hash=self._previous_hash,
             hash=digest,
+            request_id=self.request_id,
         )
 
         self._stream.write(json.dumps(asdict(entry)) + "\n")
@@ -164,6 +184,7 @@ class AuditLogVerifier:
                 entry.monotonic_ts,
                 entry.event_type,
                 entry.payload_json,
+                entry.request_id,
             )
             if entry.hash != recomputed:
                 return VerificationResult.failed(

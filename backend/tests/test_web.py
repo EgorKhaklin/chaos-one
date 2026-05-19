@@ -307,3 +307,36 @@ def test_landing_includes_delete_buttons(isolated_client: TestClient) -> None:
     body = isolated_client.get("/").text
     assert f'action="/engagements/{record["id"]}/delete"' in body
     assert ">delete</button>" in body
+
+
+def test_play_threads_request_id_into_audit_log(isolated_client: TestClient) -> None:
+    # The middleware binds request_id to structlog contextvars; the /play
+    # handler reads it back and threads it into the AuditLogWriter, so
+    # the audit entries carry the same id the access log used.
+    from chaos_backend.audit import AuditLogReader
+
+    response = isolated_client.post(
+        "/play",
+        data={"scenario": "peer_salvo", "seed": "1"},
+        headers={"X-Request-ID": "rq_known_id_a1b2"},
+    )
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "rq_known_id_a1b2"
+
+    record = isolated_client.get("/engagements").json()["engagements"][0]
+    entries = AuditLogReader.load(record["log_path"])
+    assert entries[0].request_id == "rq_known_id_a1b2"
+    assert all(e.request_id == "rq_known_id_a1b2" for e in entries)
+
+
+def test_audit_html_surfaces_request_id(isolated_client: TestClient) -> None:
+    isolated_client.post(
+        "/play",
+        data={"scenario": "peer_salvo", "seed": "1"},
+        headers={"X-Request-ID": "rq_visible_in_html"},
+    )
+    record = isolated_client.get("/engagements").json()["engagements"][0]
+
+    html = isolated_client.get(f"/engagements/{record['id']}/audit.html").text
+    assert "REQUEST ID" in html
+    assert "rq_visible_in_html" in html

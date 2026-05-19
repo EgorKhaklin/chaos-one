@@ -37,6 +37,7 @@ def run(
     log_path: str | Path,
     realtime: bool = False,
     speed: float = 1.0,
+    request_id: str = "",
 ) -> RunResult:
     """Walk scenario events into an audit log at `log_path`.
 
@@ -62,7 +63,7 @@ def run(
     previous_event_time = 0.0
     emitted = 0
 
-    with AuditLogWriter(target) as writer:
+    with AuditLogWriter(target, request_id=request_id) as writer:
         writer.append(
             "scenario_run_begin",
             {

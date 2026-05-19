@@ -129,6 +129,16 @@ def render(
     earliest = entries[0].utc_iso if entries else "--"
     latest = entries[-1].utc_iso if entries else "--"
 
+    request_ids = {e.request_id for e in entries if e.request_id}
+    request_id_meta = (
+        f"""<div>
+            <div class="meta__key">REQUEST ID</div>
+            <div class="meta__value">{_escape(next(iter(request_ids)))}</div>
+        </div>"""
+        if len(request_ids) == 1
+        else ""
+    )
+
     rows = "\n".join(
         f"""<tr>
             <td class="seq">#{entry.sequence:04d}</td>
@@ -179,6 +189,7 @@ def render(
             <div class="meta__value">{_escape(latest)}</div>
         </div>
         {source_block}
+        {request_id_meta}
     </div>
 
     <table>

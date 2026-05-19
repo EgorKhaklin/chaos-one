@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import structlog
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import (
     HTMLResponse,
@@ -405,9 +406,15 @@ def build_app(
 
         scenario_obj = build(kind, seed=seed)
         log_path = logs_dir / _engagement_filename(kind.value, seed)
+        request_id = structlog.contextvars.get_contextvars().get("request_id", "")
 
         started_at = datetime.now(UTC)
-        result = run_scenario(scenario_obj, log_path=log_path, realtime=False)
+        result = run_scenario(
+            scenario_obj,
+            log_path=log_path,
+            realtime=False,
+            request_id=request_id,
+        )
         ended_at = datetime.now(UTC)
 
         verification = AuditLogVerifier.verify(AuditLogReader.load(log_path))

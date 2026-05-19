@@ -84,6 +84,59 @@ def test_empty_log_verifies_ok(tmp_path: Path) -> None:
     assert result.valid is True
 
 
+def test_writer_threads_request_id_through_entries(tmp_path: Path) -> None:
+    log_path = tmp_path / "engagement.jsonl"
+    with AuditLogWriter(log_path, request_id="rq_abc12345") as writer:
+        writer.append("alpha", {})
+        writer.append("bravo", {})
+
+    entries = AuditLogReader.load(log_path)
+    assert all(e.request_id == "rq_abc12345" for e in entries)
+
+
+def test_chain_with_request_id_verifies(tmp_path: Path) -> None:
+    log_path = tmp_path / "engagement.jsonl"
+    with AuditLogWriter(log_path, request_id="rq_observer_01") as writer:
+        for i in range(4):
+            writer.append("tick", {"i": i})
+
+    entries = AuditLogReader.load(log_path)
+    assert AuditLogVerifier.verify(entries).valid is True
+
+
+def test_tampered_request_id_breaks_chain(tmp_path: Path) -> None:
+    log_path = tmp_path / "engagement.jsonl"
+    with AuditLogWriter(log_path, request_id="rq_real") as writer:
+        writer.append("alpha", {})
+        writer.append("bravo", {})
+
+    lines = log_path.read_text().splitlines()
+    second = json.loads(lines[1])
+    second["request_id"] = "rq_evil"
+    lines[1] = json.dumps(second)
+    log_path.write_text("\n".join(lines) + "\n")
+
+    entries = AuditLogReader.load(log_path)
+    result = AuditLogVerifier.verify(entries)
+    assert result.valid is False
+    assert result.failed_at_sequence == 2
+
+
+def test_legacy_log_without_request_id_still_verifies(tmp_path: Path) -> None:
+    # Logs written before request_id existed have no request_id field;
+    # AuditLogEntry defaults to empty string, the canonical hash form
+    # excludes the trailing |request_id segment, and verification still
+    # passes.
+    log_path = tmp_path / "engagement.jsonl"
+    with AuditLogWriter(log_path) as writer:
+        writer.append("alpha", {})
+        writer.append("bravo", {})
+
+    entries = AuditLogReader.load(log_path)
+    assert all(e.request_id == "" for e in entries)
+    assert AuditLogVerifier.verify(entries).valid is True
+
+
 def test_writer_close_is_idempotent(tmp_path: Path) -> None:
     log_path = tmp_path / "engagement.jsonl"
     writer = AuditLogWriter(log_path)
