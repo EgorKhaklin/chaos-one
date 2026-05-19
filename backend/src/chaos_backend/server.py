@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import logging
 import signal
 
@@ -39,16 +40,14 @@ async def serve(host: str, port: int, *, with_stubs: bool) -> None:
 
     if with_stubs:
         try:
-            from chaos_backend.generated import (  # type: ignore[attr-defined]
-                chaos_one_pb2_grpc,
-            )
-
-            chaos_one_pb2_grpc.add_DiscriminationServicer_to_server(discrimination, server)
-            chaos_one_pb2_grpc.add_CourseOfActionServicer_to_server(coa, server)
-            chaos_one_pb2_grpc.add_AdversaryModelServicer_to_server(adversary, server)
-            logger.info("services_registered")
+            stubs = importlib.import_module("chaos_backend.generated.chaos_one_pb2_grpc")
         except ImportError:
             logger.warning("generated_stubs_missing", hint="run grpc_tools.protoc")
+        else:
+            stubs.add_DiscriminationServicer_to_server(discrimination, server)
+            stubs.add_CourseOfActionServicer_to_server(coa, server)
+            stubs.add_AdversaryModelServicer_to_server(adversary, server)
+            logger.info("services_registered")
     else:
         logger.info("running_without_stubs")
 
