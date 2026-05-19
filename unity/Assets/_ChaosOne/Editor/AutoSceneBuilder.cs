@@ -197,6 +197,7 @@ namespace ChaosOne.EditorScripts
             if (renderer != null)
             {
                 renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                renderer.sharedMaterial = MakeEmissiveMaterial(trackId, trailColor);
             }
 
             var trail = go.AddComponent<TrailRenderer>();
@@ -249,6 +250,41 @@ namespace ChaosOne.EditorScripts
         {
             var prop = so.FindProperty(name);
             if (prop != null) prop.floatValue = value;
+        }
+
+        private const string MaterialsDir = "Assets/_ChaosOne/Data/Materials";
+
+        private static Material MakeEmissiveMaterial(string trackId, Color glowColor)
+        {
+            var path = $"{MaterialsDir}/{trackId}.mat";
+            var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (existing != null) return existing;
+
+            if (!Directory.Exists(MaterialsDir)) Directory.CreateDirectory(MaterialsDir);
+
+            // URP / built-in Lit are most likely to be present. Fall through
+            // to Standard for the legacy pipeline; final fallback is
+            // InternalErrorShader so we never crash.
+            var shader = Shader.Find("Universal Render Pipeline/Lit")
+                ?? Shader.Find("Standard")
+                ?? Shader.Find("Hidden/InternalErrorShader");
+            var mat = new Material(shader);
+
+            // The threat reads as a glowing hot kinetic object. Dim base
+            // color plus HDR emissive (3x intensity) so it blooms against
+            // the dark navy ground when post-processing is enabled, and
+            // still reads on the unprocessed default render.
+            var dim = glowColor * 0.15f;
+            dim.a = 1f;
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", dim);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", dim);
+            if (mat.HasProperty("_EmissionColor")) mat.SetColor("_EmissionColor", glowColor * 3f);
+            mat.EnableKeyword("_EMISSION");
+            mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+
+            AssetDatabase.CreateAsset(mat, path);
+            AssetDatabase.SaveAssets();
+            return mat;
         }
 
         private const string DemoArchetypePath = "Assets/_ChaosOne/Data/HGV_Demo.asset";
