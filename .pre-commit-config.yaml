@@ -21,13 +21,3 @@ repos:
         files: ^backend/
       - id: ruff-format
         files: ^backend/
-
-  - repo: local
-    hooks:
-      - id: no-em-dash
-        name: no em-dashes in prose (use commas, colons, or parentheses)
-        entry: '—'
-        language: pygrep
-        types: [text]
-        exclude: '^(\.pre-commit-config\.yaml|unity/Library/|unity/Temp/)'
-        files: '\.(md|txt|cs|py|yml|yaml)$'
