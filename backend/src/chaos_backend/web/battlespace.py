@@ -134,6 +134,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         }
         .decisions__head {
             display: flex; align-items: center; justify-content: space-between;
+            gap: 8px;
             margin-bottom: 10px;
         }
         .decisions__title {
@@ -141,11 +142,35 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             font-size: 11px;
             letter-spacing: 5px;
             font-weight: 800;
+            cursor: pointer;
+            user-select: none;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .decisions__chevron {
+            display: inline-block;
+            width: 0; height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 5px solid currentColor;
+            transition: transform var(--t-fast);
+            transform-origin: center;
+        }
+        .decisions--collapsed .decisions__chevron {
+            transform: rotate(-90deg);
         }
         .decisions__rule {
             height: 1px;
             background: var(--rule);
             margin-bottom: 12px;
+        }
+        /* When collapsed, hide the rule + body but keep the header. */
+        .decisions--collapsed .decisions__rule,
+        .decisions--collapsed #coaStack,
+        .decisions--collapsed .decisions__hint {
+            display: none;
+        }
+        .decisions--collapsed {
+            padding-bottom: 8px;
         }
 
         /* AUTO-ENGAGE toggle — switches between operator-in-loop and
@@ -591,9 +616,12 @@ _BATTLESPACE_HTML = r"""<!doctype html>
 
     <div class="overlay classbar">UNCLASSIFIED // DEMO // FOR EVALUATION</div>
 
-    <div class="overlay decisions">
+    <div class="overlay decisions" id="decisionsPanel">
         <div class="decisions__head">
-            <span class="decisions__title">DECISIONS</span>
+            <span class="decisions__title" id="decisionsTitle" title="Click to collapse / expand">
+                <span class="decisions__chevron"></span>
+                DECISIONS
+            </span>
             <button class="auto-toggle" id="autoToggle" type="button" title="Toggle auto-engage (T)">
                 <span class="auto-toggle__dot"></span>
                 <span class="auto-toggle__label">AUTO</span>
@@ -602,7 +630,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         </div>
         <div class="decisions__rule"></div>
         <div id="coaStack"></div>
-        <div class="decisions__hint">ENTER AUTH · O OBJECT · T AUTO · S STRESS · R RESET</div>
+        <div class="decisions__hint">ENTER AUTH · O OBJECT · T AUTO · S STRESS</div>
     </div>
 
     <div class="overlay adv">
@@ -871,7 +899,8 @@ const DEFENDER_BATTERIES = [
         envelope: { rangeMin:   500, rangeMax: 14_000, hMin: 200,  hMax: 100_000 },
         profile:  { cruise_mps: 3_400, boost_mps: 480, accel_mps2: 5_800,
                     boost_s: 0.45, turn_rad_s: 3.2, detonation_m: 220 },
-        logistics:{ magazine: 16, magazineMax: 16, reload_s: 0.7, maxSimul: 4 },
+        logistics:{ magazine: 24, magazineMax: 24, reload_s: 0.7, maxSimul: 4,
+                    resupply_s: 6.0 /* one round trickles in every 6 s */ },
         pk:       { HGV: 0.93, BM: 0.96, MARV: 0.88, CRUISE: 0.42, DRONE: 0.55 },
     },
     {
@@ -880,7 +909,8 @@ const DEFENDER_BATTERIES = [
         envelope: { rangeMin:   400, rangeMax: 11_000, hMin: 100,  hMax: 60_000 },
         profile:  { cruise_mps: 2_600, boost_mps: 420, accel_mps2: 4_900,
                     boost_s: 0.42, turn_rad_s: 3.0, detonation_m: 200 },
-        logistics:{ magazine: 24, magazineMax: 24, reload_s: 0.6, maxSimul: 6 },
+        logistics:{ magazine: 32, magazineMax: 32, reload_s: 0.6, maxSimul: 6,
+                    resupply_s: 4.5 },
         pk:       { HGV: 0.82, BM: 0.90, MARV: 0.90, CRUISE: 0.65, DRONE: 0.78 },
     },
     {
@@ -889,7 +919,8 @@ const DEFENDER_BATTERIES = [
         envelope: { rangeMin:   200, rangeMax:  7_000, hMin:  20,  hMax: 25_000 },
         profile:  { cruise_mps: 1_700, boost_mps: 360, accel_mps2: 4_200,
                     boost_s: 0.40, turn_rad_s: 4.5, detonation_m: 160 },
-        logistics:{ magazine: 32, magazineMax: 32, reload_s: 0.45, maxSimul: 8 },
+        logistics:{ magazine: 48, magazineMax: 48, reload_s: 0.45, maxSimul: 8,
+                    resupply_s: 3.0 },
         pk:       { HGV: 0.40, BM: 0.55, MARV: 0.85, CRUISE: 0.90, DRONE: 0.92 },
     },
     {
@@ -899,24 +930,45 @@ const DEFENDER_BATTERIES = [
         profile:  { cruise_mps: 0,   boost_mps: 0, accel_mps2: 0,
                     boost_s: 0, turn_rad_s: 0, detonation_m: 0,
                     dwell_s: 0.45 /* dwell-to-kill, line-of-sight */ },
-        logistics:{ magazine: 999, magazineMax: 999, reload_s: 0.15, maxSimul: 2 },
+        logistics:{ magazine: 999, magazineMax: 999, reload_s: 0.15, maxSimul: 2,
+                    resupply_s: 0 /* directed energy doesn't run out */ },
         pk:       { HGV: 0.30, BM: 0.35, MARV: 0.55, CRUISE: 0.92, DRONE: 0.98 },
     },
 ];
 
-// Runtime defender state (magazine drain, in-flight counts, last-fire).
-// Initialised from logistics on resetEngagement.
+// Runtime defender state (magazine, in-flight, last-fire, last-resupply).
 const defenderState = new Map();
 function resetDefenderState() {
     for (const b of DEFENDER_BATTERIES) {
         defenderState.set(b.id, {
             magazine: b.logistics.magazine,
             inflight: 0,
-            lastFired: -Infinity,
+            lastFired:    -Infinity,
+            lastResupply: 0,
         });
     }
 }
 resetDefenderState();
+
+// One round trickles back into the magazine every `resupply_s`. Models
+// a logistics tail (truck reloads / fresh canisters) so the system
+// can operate indefinitely without the operator hitting empty.
+function tickResupply() {
+    for (const b of DEFENDER_BATTERIES) {
+        const period = b.logistics.resupply_s;
+        if (!period) continue;
+        const st = defenderState.get(b.id);
+        if (!st) continue;
+        if (st.magazine >= b.logistics.magazineMax) {
+            st.lastResupply = clock.now;
+            continue;
+        }
+        if (clock.now - st.lastResupply >= period) {
+            st.magazine = Math.min(b.logistics.magazineMax, st.magazine + 1);
+            st.lastResupply = clock.now;
+        }
+    }
+}
 
 const COMPASS = [
     { id: 'N', pos: [    0, 0,  13_200] },
@@ -1062,9 +1114,14 @@ const ENGAGEMENT_ALLOC = COA_ALLOCATIONS['COA-B'];
 //   + flightTime] the track is dormant — returns a phase of -1 (pre)
 //   or 2 (post) which trackPos / trackVisible / draw* all check.
 // ═════════════════════════════════════════════════════════════════════
+// Phase in [0, 1] while the threat is in flight, -1 before launch,
+// >1 after impact. Uses absolute clock time — no modular cycle wrap.
+// The wrap was a bug: threats with launchAt > CYCLE re-appeared as
+// "pre-launch" each time clock.now wrapped, making mid-engagement
+// tracks vanish from the picture. Lifetime is owned by the
+// tickThreatLifecycle GC instead.
 function trackPhaseAt(tr, t) {
-    const cyc = t % CYCLE;
-    const elapsed = cyc - tr.launchAt;
+    const elapsed = t - tr.launchAt;
     if (elapsed < 0) return -1;
     if (elapsed > tr.flightTime) return 2;
     return elapsed / tr.flightTime;
@@ -1160,36 +1217,53 @@ const MODE_B_CLOSE = 16.0;
 function cyclePhase() { return clock.now % CYCLE; }
 
 // ═════════════════════════════════════════════════════════════════════
-//   WAVE SCHEDULER
+//   WAVE SCHEDULER + DRIZZLE
 //
-//   Procedurally generates inbound threat waves on a rolling timer.
-//   Default cadence is one 4–8-threat wave every ~14 seconds with the
-//   composition biased toward the spectrum a layered defense expects.
-//   STRESS MODE (S key) drops a single 14-threat saturation wave so
-//   the WTA + magazine + reload logic can be hammered.
+//   Continuous attack picture. Two parallel spawners:
+//
+//   • WAVE  — every 6-10 s, drops a 3-6-threat coordinated wave
+//             with the full spectrum (HGV / BM / MARV / CRUISE / DRONE).
+//             Models a coordinated saturation push.
+//   • DRIZZLE — every 1.4-2.6 s, drops one low-priority threat
+//             (DRONE / CRUISE biased) so the picture is never empty
+//             between waves. Iron Dome reality is constant pressure.
+//
+//   Press S to drop a 14-threat stress wave on top of all of this.
 // ═════════════════════════════════════════════════════════════════════
 const WAVE = {
-    nextAt: 1.0,                  // first wave 1 s after clock start
-    interval: [12, 16],           // sec between waves
-    sizeRange: [4, 8],            // threats per normal wave
-    composition: [                // sampled with these weights
+    nextAt: 0.6,
+    interval: [6, 10],
+    sizeRange: [3, 6],
+    composition: [
         ['HGV',    0.18],
         ['BM',     0.16],
-        ['MARV',   0.16],
+        ['MARV',   0.18],
         ['CRUISE', 0.30],
-        ['DRONE',  0.20],
+        ['DRONE',  0.18],
+    ],
+};
+const DRIZZLE = {
+    nextAt: 1.8,
+    interval: [1.4, 2.6],
+    composition: [
+        ['DRONE',  0.55],
+        ['CRUISE', 0.30],
+        ['MARV',   0.08],
+        ['HGV',    0.04],
+        ['BM',     0.03],
     ],
 };
 
-function pickThreatKind(rng) {
+function pickFromTable(table, rng) {
     const r = rng();
     let acc = 0;
-    for (const [k, w] of WAVE.composition) {
+    for (const [k, w] of table) {
         acc += w;
         if (r <= acc) return k;
     }
-    return WAVE.composition[WAVE.composition.length - 1][0];
+    return table[table.length - 1][0];
 }
+function pickThreatKind(rng) { return pickFromTable(WAVE.composition, rng); }
 
 function spawnWave(size, kindOverride) {
     const stagger = 0.18;
@@ -1203,14 +1277,21 @@ function spawnWave(size, kindOverride) {
 }
 
 function tickWaves() {
-    if (clock.now < WAVE.nextAt) return;
-    const size = (WAVE.sizeRange[0] | 0) + Math.floor(waveRng() * (WAVE.sizeRange[1] - WAVE.sizeRange[0] + 1));
-    spawnWave(size, null);
-    WAVE.nextAt = clock.now + WAVE.interval[0] + waveRng() * (WAVE.interval[1] - WAVE.interval[0]);
-    pushLogOnce(
-        `wave-${clock.now.toFixed(1)}`,
-        `wave inbound · ${size} contacts · BNG multiple · acquisition pending`,
-    );
+    if (clock.now >= WAVE.nextAt) {
+        const size = (WAVE.sizeRange[0] | 0) + Math.floor(waveRng() * (WAVE.sizeRange[1] - WAVE.sizeRange[0] + 1));
+        spawnWave(size, null);
+        WAVE.nextAt = clock.now + WAVE.interval[0] + waveRng() * (WAVE.interval[1] - WAVE.interval[0]);
+        pushLogOnce(
+            `wave-${clock.now.toFixed(1)}`,
+            `wave inbound · ${size} contacts · BNG multiple · acquisition pending`,
+        );
+    }
+    if (clock.now >= DRIZZLE.nextAt) {
+        const kind = pickFromTable(DRIZZLE.composition, waveRng);
+        const t = clock.now + 0.25;
+        THREATS.push(makeRandomThreat(kind, t, waveRng));
+        DRIZZLE.nextAt = clock.now + DRIZZLE.interval[0] + waveRng() * (DRIZZLE.interval[1] - DRIZZLE.interval[0]);
+    }
 }
 
 // Stress-test: jam an oversized wave through the assignment layer.
@@ -1893,14 +1974,14 @@ function predictIntercept(track, defender, _interceptorV) {
 // ═════════════════════════════════════════════════════════════════════
 
 function urgencyScore(track) {
-    const phase = trackPhase(track);
-    const phaseClamped = Math.max(0, Math.min(1, phase));
-    const ttImpact = (1 - phaseClamped) * track.flightTime + (track.launchAt - cyclePhase());
-    const remaining = Math.max(0.1, ttImpact);
+    // Time-to-impact = (launchAt + flightTime) − now. Negative for
+    // already-past-terminal tracks (they shouldn't be in the WTA list
+    // but we guard anyway).
+    const ttImpact = Math.max(0.1, (track.launchAt + track.flightTime) - clock.now);
     const cls = classifyImpact(track);
     const vitalBonus = cls === 'VITAL' ? 6 : cls === 'PERIPHERAL' ? 2 : 0;
-    const kindBonus = 5 - track.priority;  // HGV/BM = +4, drone = +1
-    return vitalBonus + kindBonus + (10 / remaining);
+    const kindBonus = 5 - track.priority;
+    return vitalBonus + kindBonus + (10 / ttImpact);
 }
 
 function computeAssignments() {
@@ -2839,18 +2920,6 @@ document.addEventListener('keydown', (e) => {
         setAutoEngage(!engagement.autoEngage);
     } else if (e.key === 's' || e.key === 'S') {
         spawnStressWave();
-    } else if (e.key === 'r' || e.key === 'R') {
-        // Hard reset — clear the picture and re-seed waves.
-        THREATS.length = 0;
-        engagement.salvos = [];
-        engagement.splashes = [];
-        engagement.killedTracks = new Set();
-        engagement.leakers = 0;
-        engagement.intercepts = 0;
-        trailsByTrack.clear();
-        resetDefenderState();
-        WAVE.nextAt = clock.now + 0.6;
-        pushLogOnce(`reset-${(clock.now*10)|0}`, `picture reset · waves restarting`);
     }
 });
 
@@ -2887,6 +2956,10 @@ function setAutoEngage(on) {
     engagement.autoEngage = on;
     const btn = document.getElementById('autoToggle');
     if (btn) btn.classList.toggle('auto-toggle--on', on);
+    // Reset manual-toggle memory whenever AUTO state changes so the
+    // panel snaps to the new default collapse state.
+    _decisionsManualToggle = false;
+    applyAutoCollapse();
     CALM_LIVE.unshift(
         on
             ? `AUTO-ENGAGE armed · ROE-2 weapons-free · operator override available`
@@ -2896,9 +2969,30 @@ function setAutoEngage(on) {
     lastCalmK = -2;
 }
 
-document.getElementById('autoToggle').addEventListener('click', () => {
+document.getElementById('autoToggle').addEventListener('click', (e) => {
+    e.stopPropagation();
     setAutoEngage(!engagement.autoEngage);
 });
+
+// ─── Collapsible Decisions panel ────────────────────────────────────
+let _decisionsManualToggle = false;     // operator overrode auto-collapse
+function setDecisionsCollapsed(collapsed) {
+    document.getElementById('decisionsPanel')
+        .classList.toggle('decisions--collapsed', collapsed);
+}
+document.getElementById('decisionsTitle').addEventListener('click', () => {
+    const panel = document.getElementById('decisionsPanel');
+    const isCollapsed = panel.classList.contains('decisions--collapsed');
+    setDecisionsCollapsed(!isCollapsed);
+    _decisionsManualToggle = true;
+});
+function applyAutoCollapse() {
+    // When AUTO is on we collapse the panel by default; the operator
+    // can still expand it manually (and we respect that). When AUTO
+    // turns off we restore the expanded view.
+    if (_decisionsManualToggle) return;
+    setDecisionsCollapsed(engagement.autoEngage);
+}
 
 // ─── Continuous AUTO engagement ────────────────────────────────────
 // When AUTO is on, run weapon-target assignment every ASSIGNMENT_PERIOD
@@ -3134,6 +3228,7 @@ function frame(ts) {
         cam.tick(FIXED_STEP);
         tickWaves();
         tickThreatLifecycle();
+        tickResupply();
         tickSalvos(FIXED_STEP);
         tickAutoEngage();
         // Legacy: also auto-reset the COA-style engagement.
