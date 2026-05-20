@@ -2914,12 +2914,10 @@ function tickSalvos(dt) {
             const expired = (clock.now - s.orphanedAt) > ORPHAN_COAST;
             const grounded = s.position[1] < 20;
             if (expired || grounded) {
-                engagement.splashes.push({
-                    point: s.position.slice(),
-                    born: clock.now,
-                    until: clock.now + 0.7,
-                    kind: 'selfdestruct',
-                });
+                // No visual splash for self-destruct — the orphan trail
+                // fade-out already shows the missile burning out, and a
+                // mid-air flash here just leaves a white puff plus a
+                // dangling smoke-line that clutters the picture.
                 pushLogOnce(
                     `sd-${s.id}`,
                     `interceptor abandoned <em>${s.defenderId}</em> · safety fuze self-destruct`,
@@ -3187,26 +3185,10 @@ function drawSplashes() {
         const age = (clock.now - sp.born) / (sp.until - sp.born);
         if (age < 0 || age > 1) continue;
         const isLeak = sp.kind === 'leak';
-        const isSelfDestruct = sp.kind === 'selfdestruct';
-        if (isSelfDestruct) {
-            // Mid-air safety-fuze detonation — small white-blue flash,
-            // no shrapnel ticks, no shockwave. Just a brief puff.
-            const r = 6 + age * 16;
-            const flash = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, r);
-            flash.addColorStop(0.00, `rgba(220, 240, 255, ${(1 - age) * 0.85})`);
-            flash.addColorStop(0.55, `rgba(170, 200, 240, ${(1 - age) * 0.45})`);
-            flash.addColorStop(1.00, 'rgba(170, 200, 240, 0)');
-            ctx.fillStyle = flash;
-            ctx.beginPath();
-            ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = `rgba(220, 240, 255, ${(1 - age) * 0.6})`;
-            ctx.lineWidth = 0.7;
-            ctx.beginPath();
-            ctx.arc(p.sx, p.sy, r * 0.6, 0, Math.PI * 2);
-            ctx.stroke();
-            continue;
-        }
+        // 'selfdestruct' splash kind is intentionally not rendered —
+        // an abandoned interceptor just disappears with the orphan
+        // trail fade-out.
+        if (sp.kind === 'selfdestruct') continue;
         // Leak splashes are bigger, crimson, longer-lived; intercept
         // splashes are smaller and amber.
         const r1 = (isLeak ? 14 : 8) + age * (isLeak ? 90 : 60);
