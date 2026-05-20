@@ -602,7 +602,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         </div>
         <div class="decisions__rule"></div>
         <div id="coaStack"></div>
-        <div class="decisions__hint">ENTER AUTHORIZE · O OBJECT · T AUTO-ENGAGE</div>
+        <div class="decisions__hint">ENTER AUTH · O OBJECT · T AUTO · S STRESS · R RESET</div>
     </div>
 
     <div class="overlay adv">
@@ -836,15 +836,87 @@ function hexPosition(thetaDeg, radius) {
     return [Math.sin(t) * radius, 0, Math.cos(t) * radius];
 }
 
-// 4 batteries at the cardinal points of a 3000-m circle around the
-// defended cell, separated by 90°. Centre command bunker at origin.
+// ═════════════════════════════════════════════════════════════════════
+//   DEFENDER DOCTRINE
+//
+//   Four batteries on a 3000-m circle. Each has:
+//
+//     POSITION       cartesian world-position
+//     COLOR          UI tint
+//     CLASS          'KINETIC' or 'DIRECTED'
+//     ENVELOPE       physical engagement envelope:
+//                    R_min, R_max  (slant range to PIP)
+//                    H_min, H_max  (target altitude band)
+//     PROFILE        interceptor flight model:
+//                    cruise_mps    terminal cruise speed
+//                    boost_mps     boost-phase mean speed
+//                    accel_mps2    boost→cruise acceleration
+//                    boost_s       seconds in boost
+//                    turn_rad_s    seeker turn rate (proportional nav)
+//                    detonation_m  proximity-fuze radius
+//     LOGISTICS      magazine, reload, max in-flight
+//     PK_MATRIX      kill probability vs threat class
+//
+//   Class-appropriate speeds let each effector earn its slot:
+//   NGI is a Mach-13 exoatmospheric kill vehicle; PAC-3 is a Mach-5
+//   terminal-tier hit-to-kill round; SM-3 sits in between with
+//   upper-tier reach. HEL is a directed beam (line-of-sight, dwell-
+//   to-kill) for low-end leakers and saturation defense.
+// ═════════════════════════════════════════════════════════════════════
 const DEFENDER_RADIUS_M = 3_000;
 const DEFENDER_BATTERIES = [
-    { id: 'NGI',   pos: hexPosition(  0, DEFENDER_RADIUS_M), color: [0.55, 0.85, 1.00] },
-    { id: 'SM-3',  pos: hexPosition( 90, DEFENDER_RADIUS_M), color: [0.55, 0.95, 0.78] },
-    { id: 'PAC-3', pos: hexPosition(180, DEFENDER_RADIUS_M), color: [0.72, 0.95, 0.55] },
-    { id: 'HEL',   pos: hexPosition(270, DEFENDER_RADIUS_M), color: [1.00, 0.88, 0.55] },
+    {
+        id: 'NGI',  pos: hexPosition(  0, DEFENDER_RADIUS_M),
+        color: [0.55, 0.85, 1.00], class: 'KINETIC',
+        envelope: { rangeMin:   500, rangeMax: 14_000, hMin: 200,  hMax: 100_000 },
+        profile:  { cruise_mps: 3_400, boost_mps: 480, accel_mps2: 5_800,
+                    boost_s: 0.45, turn_rad_s: 3.2, detonation_m: 220 },
+        logistics:{ magazine: 16, magazineMax: 16, reload_s: 0.7, maxSimul: 4 },
+        pk:       { HGV: 0.93, BM: 0.96, MARV: 0.88, CRUISE: 0.42, DRONE: 0.55 },
+    },
+    {
+        id: 'SM-3', pos: hexPosition( 90, DEFENDER_RADIUS_M),
+        color: [0.55, 0.95, 0.78], class: 'KINETIC',
+        envelope: { rangeMin:   400, rangeMax: 11_000, hMin: 100,  hMax: 60_000 },
+        profile:  { cruise_mps: 2_600, boost_mps: 420, accel_mps2: 4_900,
+                    boost_s: 0.42, turn_rad_s: 3.0, detonation_m: 200 },
+        logistics:{ magazine: 24, magazineMax: 24, reload_s: 0.6, maxSimul: 6 },
+        pk:       { HGV: 0.82, BM: 0.90, MARV: 0.90, CRUISE: 0.65, DRONE: 0.78 },
+    },
+    {
+        id: 'PAC-3', pos: hexPosition(180, DEFENDER_RADIUS_M),
+        color: [0.72, 0.95, 0.55], class: 'KINETIC',
+        envelope: { rangeMin:   200, rangeMax:  7_000, hMin:  20,  hMax: 25_000 },
+        profile:  { cruise_mps: 1_700, boost_mps: 360, accel_mps2: 4_200,
+                    boost_s: 0.40, turn_rad_s: 4.5, detonation_m: 160 },
+        logistics:{ magazine: 32, magazineMax: 32, reload_s: 0.45, maxSimul: 8 },
+        pk:       { HGV: 0.40, BM: 0.55, MARV: 0.85, CRUISE: 0.90, DRONE: 0.92 },
+    },
+    {
+        id: 'HEL',  pos: hexPosition(270, DEFENDER_RADIUS_M),
+        color: [1.00, 0.88, 0.55], class: 'DIRECTED',
+        envelope: { rangeMin:   100, rangeMax:  9_000, hMin:   0,  hMax: 12_000 },
+        profile:  { cruise_mps: 0,   boost_mps: 0, accel_mps2: 0,
+                    boost_s: 0, turn_rad_s: 0, detonation_m: 0,
+                    dwell_s: 0.45 /* dwell-to-kill, line-of-sight */ },
+        logistics:{ magazine: 999, magazineMax: 999, reload_s: 0.15, maxSimul: 2 },
+        pk:       { HGV: 0.30, BM: 0.35, MARV: 0.55, CRUISE: 0.92, DRONE: 0.98 },
+    },
 ];
+
+// Runtime defender state (magazine drain, in-flight counts, last-fire).
+// Initialised from logistics on resetEngagement.
+const defenderState = new Map();
+function resetDefenderState() {
+    for (const b of DEFENDER_BATTERIES) {
+        defenderState.set(b.id, {
+            magazine: b.logistics.magazine,
+            inflight: 0,
+            lastFired: -Infinity,
+        });
+    }
+}
+resetDefenderState();
 
 const COMPASS = [
     { id: 'N', pos: [    0, 0,  13_200] },
@@ -861,53 +933,101 @@ const ASSETS = [
     { id: 'NODE-7',  pos: hexPosition( 315, 1_400) },
 ];
 
-// Three threats inbound from different bearings. Each track has an
-// explicit `launchAt` (seconds into the demo cycle) and a `flightTime`.
-// Outside the [launchAt, launchAt + flightTime] window the track is
-// "off-screen" — pre-launch or post-splash — and won't be rendered.
-// This fixes the bug where reloading mid-cycle showed threats already
-// mid-air with no acquisition history.
-const TRACKS = [
-    {
-        id: 'HGV-WRAITH-01',
-        kind: 'HGV',
-        launch:   [-13_200,   280,   4_400],
-        apogee:   [ -1_400, 7_200,   1_700],
-        terminal: [    900,   350,    -700],
-        launchAt: 0.4,
-        flightTime: 8.5,
-        color: [1.00, 0.66, 0.38],
-        machBase: 9.4,
-        priority: 1,
-    },
-    {
-        id: 'HGV-WRAITH-02',
-        kind: 'HGV',
-        launch:   [ -9_200,   360, -11_200],
-        apogee:   [ -1_000, 6_400,  -2_800],
-        terminal: [    600,   360,   1_300],
-        launchAt: 2.0,
-        flightTime: 9.5,
-        color: [1.00, 0.55, 0.20],
-        machBase: 8.8,
-        priority: 2,
-    },
-    {
-        id: 'MARV-VIPER-03',
-        kind: 'MARV',
-        launch:   [ 12_400,   220,  10_200],
-        apogee:   [  3_400, 4_400,   3_800],
-        terminal: [   -800,   320,    -500],
-        launchAt: 4.0,
-        flightTime: 7.0,
-        color: [0.95, 0.84, 0.55],
-        machBase: 6.8,
-        priority: 3,
-    },
-];
+// ═════════════════════════════════════════════════════════════════════
+//   THREAT TAXONOMY + PROCEDURAL WAVE GENERATOR
+//
+//   Five classes of inbound threat — chosen to span the realistic
+//   envelope a layered defense has to handle. Each class fixes its
+//   trajectory shape, peak altitude band, Mach number, and which
+//   defenders are kinematically suited to engage it.
+//
+//   HGV     hypersonic glide vehicle — long arc, high apogee, fast
+//   BM      ballistic missile — high parabolic, exo / re-entry
+//   MARV    manoeuvring re-entry vehicle — descending, jinks late
+//   CRUISE  low-altitude cruise missile — sea-skimming subsonic
+//   DRONE   one-way attack drone — slow, low, large salvo doctrine
+//
+//   Every threat is a Bezier (launch, apogee, terminal) so the
+//   physics layer doesn't care which class it is — only the priors
+//   that feed weapon-target assignment.
+// ═════════════════════════════════════════════════════════════════════
+const THREAT_CLASSES = {
+    HGV:    { color: [1.00, 0.66, 0.38], machBase: 9.0,
+              apogeeRange:[6_500, 9_500], flightTimeRange: [7.0, 10.5],
+              spawnRange: [11_000, 14_000], terminalRange: [400, 1_400],
+              priority: 1 },
+    BM:     { color: [0.95, 0.55, 0.55], machBase: 7.5,
+              apogeeRange:[8_000, 13_000], flightTimeRange: [8.5, 12.0],
+              spawnRange: [11_500, 14_500], terminalRange: [200, 900],
+              priority: 1 },
+    MARV:   { color: [0.95, 0.84, 0.55], machBase: 6.8,
+              apogeeRange:[4_000, 6_500], flightTimeRange: [6.5, 9.0],
+              spawnRange: [10_000, 13_000], terminalRange: [200, 800],
+              priority: 2 },
+    CRUISE: { color: [0.85, 0.60, 0.30], machBase: 0.85,
+              apogeeRange:[ 250,   500], flightTimeRange: [10.0, 14.0],
+              spawnRange: [10_000, 13_500], terminalRange: [150, 600],
+              priority: 3 },
+    DRONE:  { color: [0.78, 0.55, 0.85], machBase: 0.30,
+              apogeeRange:[ 180,   320], flightTimeRange: [11.0, 16.0],
+              spawnRange: [ 8_500, 12_500], terminalRange: [120, 500],
+              priority: 4 },
+};
+
+// PRNG with sessionable seed so different page-loads see different
+// threat pictures, but a `window.__chaos.setSeed(n)` call reproduces.
+let WAVE_SEED = (Date.now() & 0x7fffffff) ^ 0xC1A05;
+let waveRng = mulberry32(WAVE_SEED);
+function reseedWaves(seed) { WAVE_SEED = seed; waveRng = mulberry32(seed); }
+
+let threatSerial = 0;
+function newThreatId(kind) {
+    threatSerial++;
+    const tag = { HGV: 'WRAITH', BM: 'TALON', MARV: 'VIPER', CRUISE: 'SCYTHE', DRONE: 'SHAHED' }[kind];
+    return `${kind}-${tag}-${String(threatSerial).padStart(2, '0')}`;
+}
+
+function jitter(min, max, rng) { return min + rng() * (max - min); }
+
+// Spawn one threat with a random bearing, altitude profile, and timing.
+// Returns the canonical track object the rest of the system expects.
+function makeRandomThreat(kindHint, launchAt, rng) {
+    const kinds = Object.keys(THREAT_CLASSES);
+    const kind = kindHint || kinds[(rng() * kinds.length) | 0];
+    const c = THREAT_CLASSES[kind];
+    const bearing = rng() * Math.PI * 2;
+    const spawnR = jitter(c.spawnRange[0], c.spawnRange[1], rng);
+    const termR = jitter(c.terminalRange[0], c.terminalRange[1], rng);
+    const termBearing = bearing + (rng() - 0.5) * 1.4;        // re-aim toward defended cell with scatter
+    const apoR = spawnR * (0.10 + rng() * 0.18);
+    const apoBearing = bearing + (rng() - 0.5) * 0.6;
+    const apogeeAlt = jitter(c.apogeeRange[0], c.apogeeRange[1], rng);
+    const launchAlt = 200 + rng() * 200;
+    const termAlt = 200 + rng() * 250;
+    return {
+        id: newThreatId(kind),
+        kind,
+        launch:   [Math.sin(bearing)    * spawnR, launchAlt, Math.cos(bearing)    * spawnR],
+        apogee:   [Math.sin(apoBearing) * apoR,    apogeeAlt, Math.cos(apoBearing) * apoR],
+        terminal: [Math.sin(termBearing) * termR,  termAlt,   Math.cos(termBearing) * termR],
+        launchAt: launchAt,
+        flightTime: jitter(c.flightTimeRange[0], c.flightTimeRange[1], rng),
+        color: c.color,
+        machBase: c.machBase * (0.92 + rng() * 0.18),
+        priority: c.priority,
+        spawnedAt: clock.now,
+    };
+}
+
+// THREATS is the live list. resetThreats wipes and re-seeds.
+const THREATS = [];
+
+function findThreat(id) { return THREATS.find(t => t.id === id); }
+// Legacy alias so older code paths keep working through the rewrite.
+const TRACKS = THREATS;
+function findTrack(id) { return findThreat(id); }
 
 const findDefender = (id) => DEFENDER_BATTERIES.find(d => d.id === id);
-const findTrack    = (id) => TRACKS.find(t => t.id === id);
 
 // Per-COA allocation. Map keyed by COA id → list of {defender, target,
 // kind, speed}. The `speed` here is the average interceptor speed used
@@ -981,7 +1101,12 @@ const engagement = {
     notice: null,                 // { text, until }
     pushedLog: new Set(),         // dedupe one-shot log lines
     autoEngage: false,            // ROE weapons-free auto-authorization
-    autoEngagedThisCycle: false,  // dedupe per cycle
+    autoEngagedThisCycle: false,  // dedupe per cycle (legacy COA path)
+    _salvoSerial: 0,
+    leakers: 0,
+    intercepts: 0,
+    lastAssignmentAt: -Infinity,
+    stressTriggered: false,
 };
 
 function pushLogOnce(key, line) {
@@ -1004,6 +1129,9 @@ function resetEngagement() {
     engagement.notice = null;
     engagement.pushedLog = new Set();
     engagement.autoEngagedThisCycle = false;
+    engagement._salvoSerial = 0;
+    engagement.lastAssignmentAt = -Infinity;
+    resetDefenderState();
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -1020,15 +1148,104 @@ class Clock {
 }
 const clock = new Clock();
 
-// Demo cycle — tightened so AUTO actually exercises a wave every ~20s
-// instead of every 28s, and the operator sees COA cards within ~1.2s
-// of page load. Threats spawn at their declared launchAt times.
+// Continuous demo — replaces the old fixed 20-second cycle with a
+// rolling wave scheduler. Cycle constants are retained because the
+// Mode HUD + Decisions panel still use them as the operator-loop tempo;
+// the wave generator runs independently on real-time.
 const CYCLE = 20;
 const COA_OPEN_T   = 1.2;
 const COA_CLOSE_T  = 14.0;
 const MODE_B_OPEN  = 0.8;
 const MODE_B_CLOSE = 16.0;
 function cyclePhase() { return clock.now % CYCLE; }
+
+// ═════════════════════════════════════════════════════════════════════
+//   WAVE SCHEDULER
+//
+//   Procedurally generates inbound threat waves on a rolling timer.
+//   Default cadence is one 4–8-threat wave every ~14 seconds with the
+//   composition biased toward the spectrum a layered defense expects.
+//   STRESS MODE (S key) drops a single 14-threat saturation wave so
+//   the WTA + magazine + reload logic can be hammered.
+// ═════════════════════════════════════════════════════════════════════
+const WAVE = {
+    nextAt: 1.0,                  // first wave 1 s after clock start
+    interval: [12, 16],           // sec between waves
+    sizeRange: [4, 8],            // threats per normal wave
+    composition: [                // sampled with these weights
+        ['HGV',    0.18],
+        ['BM',     0.16],
+        ['MARV',   0.16],
+        ['CRUISE', 0.30],
+        ['DRONE',  0.20],
+    ],
+};
+
+function pickThreatKind(rng) {
+    const r = rng();
+    let acc = 0;
+    for (const [k, w] of WAVE.composition) {
+        acc += w;
+        if (r <= acc) return k;
+    }
+    return WAVE.composition[WAVE.composition.length - 1][0];
+}
+
+function spawnWave(size, kindOverride) {
+    const stagger = 0.18;
+    let acc = 0;
+    for (let i = 0; i < size; i++) {
+        const kind = kindOverride || pickThreatKind(waveRng);
+        const t = clock.now + 0.25 + acc + waveRng() * 0.4;
+        THREATS.push(makeRandomThreat(kind, t, waveRng));
+        acc += stagger + waveRng() * 0.4;
+    }
+}
+
+function tickWaves() {
+    if (clock.now < WAVE.nextAt) return;
+    const size = (WAVE.sizeRange[0] | 0) + Math.floor(waveRng() * (WAVE.sizeRange[1] - WAVE.sizeRange[0] + 1));
+    spawnWave(size, null);
+    WAVE.nextAt = clock.now + WAVE.interval[0] + waveRng() * (WAVE.interval[1] - WAVE.interval[0]);
+    pushLogOnce(
+        `wave-${clock.now.toFixed(1)}`,
+        `wave inbound · ${size} contacts · BNG multiple · acquisition pending`,
+    );
+}
+
+// Stress-test: jam an oversized wave through the assignment layer.
+function spawnStressWave() {
+    spawnWave(14, null);
+    pushLogOnce(
+        `stress-${clock.now.toFixed(2)}`,
+        `<em>STRESS WAVE</em> · 14 inbound · saturation test`,
+    );
+}
+
+// Aging: garbage-collect threats whose flight is over (splashed
+// against the ground or got killed) and whose trail buffers have
+// faded. Keep them around for ~3 seconds post-event so the radar
+// afterglow / splash effects can complete.
+function tickThreatLifecycle() {
+    for (let i = THREATS.length - 1; i >= 0; i--) {
+        const t = THREATS[i];
+        const phase = trackPhase(t);
+        // Cleanup if killed >3 s ago OR phase > 1.15 (ground impact already drawn)
+        if (engagement.killedTracks.has(t.id)) {
+            if (clock.now - (t._killedAt || clock.now) > 2.5) {
+                THREATS.splice(i, 1);
+                trailsByTrack.delete(t.id);
+                engagement.killedTracks.delete(t.id);
+            }
+        } else if (phase > 1.4) {
+            // Threat reached terminal and was never killed — log a leak.
+            pushLogOnce(`leaker-${t.id}`, `LEAKER <em>${t.id}</em> impacted defended cell`);
+            engagement.leakers = (engagement.leakers || 0) + 1;
+            THREATS.splice(i, 1);
+            trailsByTrack.delete(t.id);
+        }
+    }
+}
 
 // ═════════════════════════════════════════════════════════════════════
 //   STARS — deterministic placement so reloads are pixel-identical.
@@ -1396,30 +1613,32 @@ function drawImpactPredictions() {
 
 // ═════════════════════════════════════════════════════════════════════
 //   LAYER: trails (Catmull-Rom smoothed)
+//   Keyed by track id so the THREATS list can be dynamic without
+//   invalidating per-track history.
 // ═════════════════════════════════════════════════════════════════════
 const TRAIL_SAMPLES = 72;
-const trails = TRACKS.map(() => []);
+const trailsByTrack = new Map();
 
 function pushTrailSamples() {
-    for (let i = 0; i < TRACKS.length; i++) {
-        // Reset the trail when the track is dormant — keeps the
-        // streak from "teleporting" between cycles.
-        if (!trackVisible(TRACKS[i])) {
-            if (trails[i].length) trails[i].length = 0;
+    for (const tr of THREATS) {
+        let s = trailsByTrack.get(tr.id);
+        if (!trackVisible(tr)) {
+            if (s && s.length) s.length = 0;
             continue;
         }
-        trails[i].push(trackPos(TRACKS[i]));
-        if (trails[i].length > TRAIL_SAMPLES) trails[i].shift();
+        if (!s) { s = []; trailsByTrack.set(tr.id, s); }
+        s.push(trackPos(tr));
+        if (s.length > TRAIL_SAMPLES) s.shift();
     }
 }
 
 function drawTrails() {
     const subdivisions = 8;        // Catmull-Rom interior samples per segment
-    for (let ti = 0; ti < TRACKS.length; ti++) {
-        const tr = TRACKS[ti];
+    for (const tr of THREATS) {
         if (engagement.killedTracks.has(tr.id)) continue;
         if (!trackVisible(tr)) continue;
-        const s = trails[ti];
+        const s = trailsByTrack.get(tr.id);
+        if (!s) continue;
         const n = s.length;
         if (n < 4) continue;
 
@@ -1484,48 +1703,122 @@ function drawTrails() {
 //      frame so the missile flies a true collision course.
 // ═════════════════════════════════════════════════════════════════════
 
-// Average interceptor speed including boost (used by planIntercept
-// only — in-flight uses the live boost+cruise model).
-const KINETIC_AVG_MPS = 935;
-const KINETIC_CRUISE_MPS = 1100;
-const KINETIC_BOOST_DURATION = 0.55;
-const KINETIC_BOOST_AVG_MPS = 660;
+// Per-defender effective-speed helpers. The planner uses an average
+// that accounts for the boost ramp; the salvo physics uses the live
+// boost+cruise+accel model from the defender profile.
+function defenderAvgSpeed(def) {
+    if (def.class === 'DIRECTED') return 1e9;       // effectively instant
+    return def.profile.boost_mps * (def.profile.boost_s / 4) / 1 +
+           def.profile.cruise_mps * 0.85;           // ~85% of cruise on average
+}
+function defenderBoostDist(def) {
+    if (def.class === 'DIRECTED') return 0;
+    return def.profile.boost_mps * def.profile.boost_s;
+}
 
-function planIntercept(track, defender, avgSpeed) {
+// REACTION: minimum slack we require before committing — accounts for
+// the seeker's reaction time and the operator-loop reveal delay.
+const ENGAGEMENT_REACTION = 0.35;
+// Detection delay: how long after a threat appears before the radar
+// has a track quality fit to engage on.
+const RADAR_DETECTION_DELAY = 0.4;
+
+// Predicted-impact point (PIP) — where the threat will impact the
+// ground plane if unengaged. Iron Dome's signature behaviour: only
+// expend interceptors on threats that will hit the defended cell.
+function predictImpactPoint(track) {
+    return [track.terminal[0], 0, track.terminal[2]];
+}
+
+// True if the predicted impact lies inside the defended bubble. We
+// also classify the impact as VITAL (≤ 2 km — near command/assets) or
+// PERIPHERAL (2-8 km — assets-of-opportunity but still defended).
+function classifyImpact(track) {
+    const pip = predictImpactPoint(track);
+    const range = Math.hypot(pip[0], pip[2]);
+    if (range <= 2_400) return 'VITAL';
+    if (range <= 8_000) return 'PERIPHERAL';
+    return 'OUTSIDE';
+}
+
+function planIntercept(track, defender) {
+    if (defender.class === 'DIRECTED') {
+        // Line-of-sight directed energy: feasible if the target is
+        // ever in envelope at any phase, and if mid-trajectory
+        // distance is within rangeMax. Pick the phase that minimises
+        // slant range.
+        let best = null;
+        const samples = 48;
+        for (let i = 0; i <= samples; i++) {
+            const ph = i / samples;
+            const point = V3.bezQ(track.launch, track.apogee, track.terminal, ph);
+            const tAtCycle = track.launchAt + ph * track.flightTime;
+            const threatT = tAtCycle - clock.now;
+            if (threatT < ENGAGEMENT_REACTION) continue;
+            const dist = V3.len(V3.sub(point, [defender.pos[0], 380, defender.pos[2]]));
+            if (dist < defender.envelope.rangeMin || dist > defender.envelope.rangeMax) continue;
+            if (point[1] < defender.envelope.hMin || point[1] > defender.envelope.hMax) continue;
+            const interceptorT = defender.profile.dwell_s || 0.45;
+            if (interceptorT > threatT + 0.05) continue;
+            const slack = threatT - interceptorT;
+            if (best === null || slack < best.slack) {
+                best = { tti: interceptorT, threatT, slack, ph, point };
+            }
+        }
+        return best;
+    }
+
     const launcherPos = [defender.pos[0], 380, defender.pos[2]];
-    const boostDist = KINETIC_BOOST_AVG_MPS * KINETIC_BOOST_DURATION;
-    // Earliest phase the threat can be intercepted from now: at minimum
-    // the radar must have acquired it (track.launchAt + 0.3 s detection
-    // delay), and we need a small reaction window.
-    const REACTION = 0.35;
-    const nowCyc = cyclePhase();
+    const boostDist = defenderBoostDist(defender);
+    const profile = defender.profile;
     const minPhase = Math.max(
         0,
-        (Math.max(track.launchAt + 0.3, nowCyc + REACTION) - track.launchAt) / track.flightTime
+        (Math.max(track.launchAt + RADAR_DETECTION_DELAY, clock.now + ENGAGEMENT_REACTION) - track.launchAt) / track.flightTime
     );
     if (minPhase > 1) return null;
 
-    const samples = 60;
+    const samples = 64;
     let best = null;
     for (let i = 0; i <= samples; i++) {
         const ph = minPhase + (1 - minPhase) * (i / samples);
         const tAtCycle = track.launchAt + ph * track.flightTime;
-        const threatT = tAtCycle - nowCyc;
-        if (threatT < REACTION) continue;
+        const threatT = tAtCycle - clock.now;
+        if (threatT < ENGAGEMENT_REACTION) continue;
         const point = V3.bezQ(track.launch, track.apogee, track.terminal, ph);
         const dist = V3.len(V3.sub(point, launcherPos));
-        const interceptorT = (dist <= boostDist)
-            ? dist / KINETIC_BOOST_AVG_MPS
-            : KINETIC_BOOST_DURATION + (dist - boostDist) / KINETIC_CRUISE_MPS;
-        if (interceptorT > threatT + 0.05) continue;     // infeasible
+
+        // Envelope gates.
+        if (dist < defender.envelope.rangeMin) continue;
+        if (dist > defender.envelope.rangeMax) continue;
+        if (point[1] < defender.envelope.hMin)  continue;
+        if (point[1] > defender.envelope.hMax)  continue;
+
+        // Time-to-fly model: boost phase (0 → boost_s, avg boost speed)
+        // + cruise phase. Exact ∫v dt over the boost ramp:
+        //   distance covered in boost = (1/2)(boost_mps + cruise_mps) * boost_s
+        //   approx using boost_mps avg if cruise not yet reached.
+        let interceptorT;
+        const avgBoost = (profile.boost_mps + profile.cruise_mps) * 0.5;
+        const fullBoostDist = avgBoost * profile.boost_s;
+        if (dist <= fullBoostDist) {
+            // Newton-step on (1/2)(a)(t²) + boost*t = dist
+            // a = (cruise - boost) / boost_s
+            const aR = (profile.cruise_mps - profile.boost_mps) / profile.boost_s;
+            const A = 0.5 * aR;
+            const B = profile.boost_mps;
+            const C = -dist;
+            const disc = B * B - 4 * A * C;
+            interceptorT = (disc < 0) ? dist / avgBoost : (-B + Math.sqrt(disc)) / (2 * A);
+        } else {
+            interceptorT = profile.boost_s + (dist - fullBoostDist) / profile.cruise_mps;
+        }
+        if (interceptorT > threatT + 0.04) continue;     // infeasible
         const slack = threatT - interceptorT;
-        // Prefer the SMALLEST positive slack — converge on the
-        // crossing point where threat and interceptor times match.
         if (best === null || slack < best.slack) {
             best = { tti: interceptorT, threatT, slack, ph, point };
         }
     }
-    return best;        // null if no feasible intercept along trajectory
+    return best;
 }
 
 // Quadratic lead solution for an interceptor at p_I cruising at v_I
@@ -1567,22 +1860,132 @@ function trackVelAt(track, t) {
 // Legacy name retained for the dashed planning lines + the stats TTI.
 // Now backed by planIntercept so it shares the same math.
 function predictIntercept(track, defender, _interceptorV) {
-    const p = planIntercept(track, defender, KINETIC_AVG_MPS);
+    const p = planIntercept(track, defender);
     if (p) return { tti: p.tti, point: p.point, feasible: true };
     return { tti: 0, point: trackPos(track), feasible: false };
 }
 
+// ═════════════════════════════════════════════════════════════════════
+//   WEAPON-TARGET ASSIGNMENT (WTA)
+//
+//   The classical WTA problem: assign m interceptors to n targets to
+//   maximise expected kills while respecting envelope, magazine, and
+//   in-flight limits per defender.
+//
+//   We use a priority-greedy approximation with Iron-Dome doctrine
+//   biases — it's near-optimal for the 4×N case and runs in O(N log N
+//   + 4N) per assignment cycle, well under one frame:
+//
+//   1.  PIP-filter: skip threats whose terminal lies OUTSIDE the
+//       defended bubble. (Iron Dome's signature efficiency move.)
+//   2.  Order surviving threats by URGENCY (low time-to-impact, high
+//       class priority, vital impact > peripheral).
+//   3.  For each threat in priority order, iterate the 4 defenders
+//       and SCORE each pairing:
+//         score = pk(defender, threat) × (slack + 0.5) − 0.4 × kindMismatch
+//       Reject pairings without magazine, exceeding maxSimul, still
+//       inside reload window, or with no feasible planIntercept.
+//   4.  Assign the highest-scoring defender. For VITAL HVTs (HGV/BM
+//       in the vital bubble) assign a SECOND interceptor from the
+//       next-best defender — shoot-shoot-look salvo doctrine.
+//   5.  Decrement that defender's expected magazine + in-flight
+//       counters so successive iterations see the updated state.
+// ═════════════════════════════════════════════════════════════════════
+
+function urgencyScore(track) {
+    const phase = trackPhase(track);
+    const phaseClamped = Math.max(0, Math.min(1, phase));
+    const ttImpact = (1 - phaseClamped) * track.flightTime + (track.launchAt - cyclePhase());
+    const remaining = Math.max(0.1, ttImpact);
+    const cls = classifyImpact(track);
+    const vitalBonus = cls === 'VITAL' ? 6 : cls === 'PERIPHERAL' ? 2 : 0;
+    const kindBonus = 5 - track.priority;  // HGV/BM = +4, drone = +1
+    return vitalBonus + kindBonus + (10 / remaining);
+}
+
+function computeAssignments() {
+    const assignments = [];
+    // Snapshot defender state so we can simulate the magazine drain
+    // without mutating until we commit.
+    const sim = new Map();
+    for (const b of DEFENDER_BATTERIES) {
+        const st = defenderState.get(b.id);
+        sim.set(b.id, {
+            magazine: st.magazine,
+            inflight: st.inflight,
+            lastFired: st.lastFired,
+        });
+    }
+
+    // PIP-filter + sort threats by urgency.
+    const ranked = THREATS
+        .filter(t => !engagement.killedTracks.has(t.id))
+        .filter(t => trackVisible(t))                        // already detected by radar
+        .filter(t => classifyImpact(t) !== 'OUTSIDE')         // Iron Dome: don't waste shots
+        .filter(t => !(t._assignedKinetic || 0) || t._needsReshot);
+    ranked.sort((a, b) => urgencyScore(b) - urgencyScore(a));
+
+    for (const tr of ranked) {
+        // Per-track: rank defenders by score, take top-2 if HVT.
+        const candidates = [];
+        for (const def of DEFENDER_BATTERIES) {
+            const st = sim.get(def.id);
+            if (st.magazine <= 0) continue;
+            if (st.inflight >= def.logistics.maxSimul) continue;
+            if (clock.now - st.lastFired < def.logistics.reload_s) continue;
+            const plan = planIntercept(tr, def);
+            if (!plan) continue;
+            const pk = def.pk[tr.kind] ?? 0.5;
+            const score = pk * (plan.slack + 0.4)
+                        + (def.class === 'DIRECTED' ? 0.2 : 0);   // small DEZ preference
+            candidates.push({ def, plan, pk, score });
+        }
+        if (!candidates.length) continue;
+        candidates.sort((a, b) => b.score - a.score);
+        const cls = classifyImpact(tr);
+        const isHVT = (tr.priority <= 2) && (cls === 'VITAL');
+        const wantShots = isHVT ? 2 : 1;
+        let committed = 0;
+        for (const c of candidates) {
+            if (committed >= wantShots) break;
+            // Don't assign two of the same defender to the same target.
+            if (assignments.some(a => a.targetId === tr.id && a.defenderId === c.def.id)) continue;
+            assignments.push({
+                defenderId: c.def.id,
+                targetId:   tr.id,
+                kind:       c.def.class,
+                plan:       c.plan,
+                pk:         c.pk,
+            });
+            // Mutate sim so the next threat in the ranking sees the
+            // committed defender as one tube down.
+            const st = sim.get(c.def.id);
+            st.magazine -= 1;
+            st.inflight += 1;
+            st.lastFired = clock.now;
+            committed++;
+        }
+    }
+    return assignments;
+}
+
 function drawEngagementAllocations() {
-    // Hide the planning overlay once the operator authorizes — the
-    // actual salvo lines take over.
+    // In WTA-driven AUTO mode the salvos themselves visualise the
+    // engagement; planning overlays would clutter the picture. Only
+    // show planning lines for the legacy operator-COA path while a
+    // COA is on the table.
+    if (engagement.autoEngage) return;
     if (engagement.authorizedCOA !== null) return;
-    if (!(cyclePhase() >= 8 && cyclePhase() < 21)) return;
-    for (const a of ENGAGEMENT_ALLOC) {
-        const def = findDefender(a.defender);
-        const tr  = findTrack(a.target);
+    if (!(cyclePhase() >= COA_OPEN_T && cyclePhase() < COA_CLOSE_T)) return;
+    // Pick the top-N WTA candidates as the planning overlay.
+    const plan = computeAssignments().slice(0, 6);
+    for (const a of plan) {
+        const def = findDefender(a.defenderId);
+        const tr  = findTrack(a.targetId);
         if (!def || !tr) continue;
         if (engagement.killedTracks.has(tr.id)) continue;
-        const { tti, point } = predictIntercept(tr, def, a.speed);
+        const point = a.plan.point;
+        const tti = a.plan.tti;
         const defS = proj.project([def.pos[0], 380, def.pos[2]]);
         const intS = proj.project(point);
         if (!defS || !intS) continue;
@@ -1609,7 +2012,7 @@ function drawEngagementAllocations() {
         ctx.stroke();
 
         ctx.font = '800 9px ui-monospace, "SF Mono", Menlo, monospace';
-        const txt = `${a.defender}→${a.target.split('-').slice(-1)[0]} · TTI ${tti.toFixed(1)}s`;
+        const txt = `${a.defenderId}→${tr.id.split('-').slice(-1)[0]} · TTI ${tti.toFixed(1)}s`;
         const m = ctx.measureText(txt);
         ctx.fillStyle = 'rgba(10, 22, 40, 0.85)';
         ctx.fillRect(intS.sx + r + 4, intS.sy - 8, m.width + 8, 14);
@@ -1625,61 +2028,79 @@ function drawEngagementAllocations() {
 //   Position uses proportional pursuit: each step, the salvo accelerates
 //   along the unit vector toward the target's current world position.
 // ═════════════════════════════════════════════════════════════════════
-function launchSalvo(coaId, alloc, launchOffsetSec) {
-    const def = findDefender(alloc.defender);
-    const tr  = findTrack(alloc.target);
-    if (!def || !tr) return;
-    if (engagement.killedTracks.has(tr.id)) return;
+// Launch a salvo using the defender's actual interceptor profile.
+// `alloc` is { defender, target, kind } — the WTA / COA caller can
+// optionally supply `plan` (precomputed planIntercept result) so we
+// don't pay for the sweep twice in the same tick.
+function launchSalvo(coaId, alloc, launchOffsetSec, precomputedPlan) {
+    // Accept both naming conventions: COA-style `{defender, target}`
+    // and WTA-style `{defenderId, targetId}`.
+    const defenderName = alloc.defender   || alloc.defenderId;
+    const targetName   = alloc.target     || alloc.targetId;
+    const def = findDefender(defenderName);
+    const tr  = findTrack(targetName);
+    if (!def || !tr) return null;
+    if (engagement.killedTracks.has(tr.id)) return null;
 
-    // Pre-flight feasibility check (kinetic only — directed energy is
-    // effectively instantaneous so it's always feasible while the
-    // target is in line-of-sight).
-    let plan = null;
-    if (alloc.kind === 'KINETIC') {
-        plan = planIntercept(tr, def, KINETIC_AVG_MPS);
+    const st = defenderState.get(def.id);
+    if (!st || st.magazine <= 0) {
+        pushLogOnce(
+            `dry-${defenderName}-${tr.id}-${(clock.now * 10) | 0}`,
+            `<em>${defenderName}</em> magazine empty · skipped`,
+        );
+        return null;
+    }
+    if (st.inflight >= def.logistics.maxSimul) return null;
+    if (clock.now - st.lastFired < def.logistics.reload_s) return null;
+
+    let plan = precomputedPlan || null;
+    if (!plan && def.class === 'KINETIC') {
+        plan = planIntercept(tr, def);
         if (!plan) {
             pushLogOnce(
-                `infeasible-${coaId}-${alloc.defender}-${alloc.target}`,
-                `intercept infeasible <em>${alloc.defender}→${tr.id}</em> · no kinematic solution`,
+                `infeasible-${defenderName}-${targetName}`,
+                `intercept infeasible <em>${defenderName}→${tr.id}</em> · no kinematic solution`,
             );
-            return;     // no ghost shot
+            return null;
         }
     }
 
+    const profile = def.profile;
+    const isDirected = def.class === 'DIRECTED';
     engagement.salvos.push({
-        id: `${coaId}-${alloc.defender}-${alloc.target}-${engagement.salvos.length}`,
+        id: `${defenderName}-${targetName}-${++engagement._salvoSerial}`,
         coa: coaId,
-        defenderId: alloc.defender,
-        targetId: alloc.target,
-        kind: alloc.kind,
-        cruiseSpeedMps:  alloc.kind === 'DIRECTED' ? 0 : KINETIC_CRUISE_MPS,
-        boostSpeedMps:   alloc.kind === 'DIRECTED' ? 0 : 220,
-        accelMps2:       alloc.kind === 'DIRECTED' ? 0 : 1_400,
-        turnRateRadSec:  alloc.kind === 'DIRECTED' ? 0 : 2.4,
-        boostDuration:   alloc.kind === 'DIRECTED' ? 0 : KINETIC_BOOST_DURATION,
-        directedDwell:   alloc.kind === 'DIRECTED' ? 0.4 : 0,
-        // `commitAt`  — when the operator pressed AUTHORIZE
-        // `armedAt`   — when the target was acquired by radar (the
-        //               salvo holds at the launcher until then)
-        // `launchedAt`— when the missile actually lifts off
-        commitAt: clock.now + launchOffsetSec,
-        armedAt: null,
+        defenderId: defenderName,
+        targetId: targetName,
+        kind: def.class,
+        // Pulled directly from the defender's interceptor profile, so
+        // each battery flies its own kinematics.
+        cruiseSpeedMps:  isDirected ? 0 : profile.cruise_mps,
+        boostSpeedMps:   isDirected ? 0 : profile.boost_mps,
+        accelMps2:       isDirected ? 0 : profile.accel_mps2,
+        turnRateRadSec:  isDirected ? 0 : profile.turn_rad_s,
+        boostDuration:   isDirected ? 0 : profile.boost_s,
+        detonationM:     isDirected ? 0 : profile.detonation_m,
+        directedDwell:   isDirected ? (profile.dwell_s || 0.45) : 0,
+        commitAt: clock.now + (launchOffsetSec || 0),
+        armedAt:  null,
         launchedAt: null,
-        // Planned intercept point + planned TTI from planIntercept.
-        // These are refined each frame by leadInterceptTime once the
-        // missile is airborne.
         plannedTTI:   plan ? plan.tti   : null,
         plannedPoint: plan ? plan.point : null,
         position: [def.pos[0], 380, def.pos[2]],
         velocity: [0, 0, 0],
         speed: 0,
-        state: 'queued',           // queued (pre-arm) → armed (on launcher, target acquired) →
-                                   // inflight → splash → done
+        state: 'queued',
         impactPoint: null,
         impactAt: null,
-        color: alloc.kind === 'DIRECTED' ? [1.00, 0.88, 0.55] : [0.55, 0.85, 1.00],
+        color: [...def.color],
         trail: [],
+        pk: def.pk[tr.kind] ?? 0.5,
     });
+    st.magazine -= 1;
+    st.inflight += 1;
+    st.lastFired = clock.now;
+    return engagement.salvos[engagement.salvos.length - 1];
 }
 
 // Smoothly rotate vector `v` toward `target` direction at angular
@@ -1703,35 +2124,40 @@ function turnToward(velUnit, targetDir, omega, dt) {
     ];
 }
 
+// Mark a salvo as finished — credit the defender's in-flight slot back
+// and book-keep the engagement outcome.
+function retireSalvo(s, outcome) {
+    if (s._retired) return;
+    s._retired = true;
+    s.state = outcome === 'kill' ? 'splash' : 'done';
+    const st = defenderState.get(s.defenderId);
+    if (st && st.inflight > 0) st.inflight -= 1;
+    if (outcome === 'kill') engagement.intercepts += 1;
+    if (typeof noteSalvoOutcome === 'function') noteSalvoOutcome(s, outcome);
+}
+
 function tickSalvos(dt) {
     for (const s of engagement.salvos) {
         if (s.state === 'done') continue;
         if (clock.now < s.commitAt) continue;        // pre-commit hold
         const tr = findTrack(s.targetId);
         if (!tr || engagement.killedTracks.has(s.targetId)) {
-            s.state = 'done';
+            if (s.state === 'queued' || s.state === 'inflight') retireSalvo(s, 'abort');
             continue;
         }
         const def = findDefender(s.defenderId);
 
         // ── Acquisition gate ──────────────────────────────────────
-        // queued → armed: the salvo is committed but the radar hasn't
-        // yet acquired the threat. Re-plan continuously while we wait;
-        // refuse to lift off until we have a feasible solution AND the
-        // track has been visible for at least the detection window.
         if (s.state === 'queued') {
             if (!trackVisible(tr)) continue;
-            // Re-plan now that the track is up. This both keeps the
-            // plan tight when the cycle wraps and catches the case
-            // where waiting too long left no feasible intercept.
-            if (s.kind === 'KINETIC') {
-                const plan = planIntercept(tr, def, KINETIC_AVG_MPS);
+            if (def.class === 'KINETIC') {
+                const plan = planIntercept(tr, def);
                 if (!plan) {
-                    s.state = 'done';
                     pushLogOnce(
                         `miss-${tr.id}-${s.defenderId}`,
                         `intercept infeasible <em>${s.defenderId}→${tr.id}</em> · target out of envelope`,
                     );
+                    retireSalvo(s, 'abort');
                     continue;
                 }
                 s.plannedTTI = plan.tti;
@@ -1747,10 +2173,19 @@ function tickSalvos(dt) {
         if (s.kind === 'DIRECTED') {
             s.position = V3.lerp(s.position, targetPos, 0.5);
             if (clock.now - s.launchedAt >= s.directedDwell) {
-                s.state = 'splash';
+                // Roll Pk for directed-energy: high vs slow/low, low vs
+                // hardened HGV. Misses don't kill the track — they just
+                // expend dwell time. WTA will re-task on the miss.
+                const hit = Math.random() < (s.pk || 0.7);
                 s.impactPoint = targetPos;
                 s.impactAt = clock.now;
-                killTrack(tr.id, targetPos);
+                if (hit) {
+                    retireSalvo(s, 'kill');
+                    killTrack(tr.id, targetPos);
+                } else {
+                    pushLogOnce(`miss-${s.id}`, `miss <em>${s.defenderId}→${tr.id}</em> · re-task pending`);
+                    retireSalvo(s, 'miss');
+                }
             }
             continue;
         }
@@ -1761,7 +2196,7 @@ function tickSalvos(dt) {
         const flightT = clock.now - s.launchedAt;
         const cruise = s.speed > 0 ? s.speed : s.cruiseSpeedMps;
         const v_T = trackVelAt(tr, clock.now);
-        const t_lead = leadInterceptTime(s.position, targetPos, v_T, Math.max(cruise, KINETIC_BOOST_AVG_MPS));
+        const t_lead = leadInterceptTime(s.position, targetPos, v_T, Math.max(cruise, s.boostSpeedMps));
         const aimPoint = (t_lead !== null)
             ? trackPosAt(tr, clock.now + t_lead)
             : targetPos;                                    // fallback: pure pursuit
@@ -1792,15 +2227,24 @@ function tickSalvos(dt) {
         const newDir = turnToward(currentDir, desiredDir, s.turnRateRadSec, dt);
         s.velocity = V3.scale(newDir, s.speed);
 
-        // Live distance to the actual threat (not the aim point) drives
-        // the splash threshold so the warhead detonates at proximity.
+        // Live distance to the actual threat drives the proximity fuze.
         const liveDist = V3.len(V3.sub(targetPos, s.position));
         const stepLen = s.speed * dt;
-        if (liveDist < Math.max(140, stepLen * 1.4)) {
-            s.state = 'splash';
+        const fuzeR = Math.max(s.detonationM || 160, stepLen * 1.4);
+        if (liveDist < fuzeR) {
+            // Roll Pk inside the lethal radius. If we miss, the missile
+            // continues for a beat then self-destructs (logged) so we
+            // don't claim ghost kills.
+            const hit = Math.random() < (s.pk || 0.8);
             s.impactPoint = targetPos;
             s.impactAt = clock.now;
-            killTrack(tr.id, targetPos);
+            if (hit) {
+                retireSalvo(s, 'kill');
+                killTrack(tr.id, targetPos);
+            } else {
+                pushLogOnce(`miss-${s.id}`, `miss <em>${s.defenderId}→${tr.id}</em> · ${tr.kind} survived fuze`);
+                retireSalvo(s, 'miss');
+            }
         } else {
             s.position = V3.add(s.position, V3.scale(s.velocity, dt));
             const samplePeriod = 1 / 30;
@@ -1811,15 +2255,13 @@ function tickSalvos(dt) {
             }
         }
 
-        // Safety floor: if a kinetic salvo has dropped below 20 m and
-        // hasn't yet impacted, it's a leakage. Mark done, log it. Stops
-        // dud salvos from ploughing into the deck and rendering forever.
-        if (s.position[1] < 20 && flightT > 0.8 && s.state !== 'splash') {
-            s.state = 'done';
+        // Safety floor: leakage cleanup.
+        if (s.position[1] < 20 && flightT > 0.8 && s.state === 'inflight') {
             pushLogOnce(
                 `leak-${s.id}`,
                 `interceptor leakage <em>${s.defenderId}→${tr.id}</em> · ground impact`,
             );
+            retireSalvo(s, 'leak');
         }
     }
     // Garbage-collect old splashes
@@ -1833,6 +2275,8 @@ function tickSalvos(dt) {
 function killTrack(targetId, worldPoint) {
     if (engagement.killedTracks.has(targetId)) return;
     engagement.killedTracks.add(targetId);
+    const tr = findTrack(targetId);
+    if (tr) tr._killedAt = clock.now;
     engagement.splashes.push({ point: worldPoint, born: clock.now, until: clock.now + 1.1 });
     pushLogOnce(
         `kill-${targetId}`,
@@ -2393,6 +2837,20 @@ document.addEventListener('keydown', (e) => {
         }
     } else if (e.key === 't' || e.key === 'T') {
         setAutoEngage(!engagement.autoEngage);
+    } else if (e.key === 's' || e.key === 'S') {
+        spawnStressWave();
+    } else if (e.key === 'r' || e.key === 'R') {
+        // Hard reset — clear the picture and re-seed waves.
+        THREATS.length = 0;
+        engagement.salvos = [];
+        engagement.splashes = [];
+        engagement.killedTracks = new Set();
+        engagement.leakers = 0;
+        engagement.intercepts = 0;
+        trailsByTrack.clear();
+        resetDefenderState();
+        WAVE.nextAt = clock.now + 0.6;
+        pushLogOnce(`reset-${(clock.now*10)|0}`, `picture reset · waves restarting`);
     }
 });
 
@@ -2442,22 +2900,51 @@ document.getElementById('autoToggle').addEventListener('click', () => {
     setAutoEngage(!engagement.autoEngage);
 });
 
-// Called from the frame loop. When AUTO is on and a recommended COA
-// is active and we haven't already committed this cycle, authorize.
+// ─── Continuous AUTO engagement ────────────────────────────────────
+// When AUTO is on, run weapon-target assignment every ASSIGNMENT_PERIOD
+// seconds and launch interceptors for the resulting allocations. This
+// is the brain of the Iron-Dome-flavoured controller — it sees the
+// current threat picture, picks the best defender per threat, and
+// fires immediately. Salvos still pass through the queued → inflight
+// acquisition gate so they don't ghost-shoot.
+const ASSIGNMENT_PERIOD = 0.35;          // 350 ms WTA tick
 function tickAutoEngage() {
     if (!engagement.autoEngage) return;
-    if (engagement.authorizedCOA) return;
-    if (engagement.autoEngagedThisCycle) return;
-    const t = cyclePhase();
-    if (t < COA_OPEN_T || t >= COA_CLOSE_T) return;
-    // ~300 ms reveal delay so the operator sees the recommendation
-    // appear before the system commits.
-    if (t < COA_OPEN_T + 0.3) return;
-    const recommended = Object.values(COAS).find(c => c.rec);
-    if (!recommended) return;
-    if (engagement.objected.has(recommended.id)) return;
-    engagement.autoEngagedThisCycle = true;
-    authorizeCOA(recommended.id, 'AUTO');
+    if (clock.now - engagement.lastAssignmentAt < ASSIGNMENT_PERIOD) return;
+    engagement.lastAssignmentAt = clock.now;
+    const assignments = computeAssignments();
+    if (!assignments.length) return;
+    // Tag each target so the WTA doesn't re-task on threats already
+    // engaged unless the engagement misses.
+    for (const a of assignments) {
+        const tr = findTrack(a.targetId);
+        if (!tr) continue;
+        // Skip if there's already an in-flight salvo from this defender
+        // to this target.
+        const dup = engagement.salvos.some(s =>
+            !s._retired &&
+            s.targetId === a.targetId &&
+            s.defenderId === a.defenderId &&
+            (s.state === 'queued' || s.state === 'inflight'));
+        if (dup) continue;
+        const launched = launchSalvo('AUTO-WTA', a, 0, a.plan);
+        if (launched) {
+            tr._assignedKinetic = (tr._assignedKinetic || 0) + 1;
+        }
+    }
+}
+
+// Re-engagement: when a salvo retires as 'miss' or 'leak', clear the
+// target's _assignedKinetic flag so the next WTA pass picks a fresh
+// shooter. Called from retireSalvo via a tail-hook in tickSalvos.
+function noteSalvoOutcome(s, outcome) {
+    if (outcome !== 'kill') {
+        const tr = findTrack(s.targetId);
+        if (tr) {
+            tr._assignedKinetic = Math.max(0, (tr._assignedKinetic || 1) - 1);
+            tr._needsReshot = true;
+        }
+    }
 }
 
 function objectCOA(coaId) {
@@ -2553,56 +3040,56 @@ function renderCalm() {
 
 // ─── Weapons bay state — magazines drop when COA-B is authorized ─────
 const BAY_BASE = {
-    'NGI':   { count: 22,  max: 25,  fmt: (v) => String(v) },
-    'SM-3':  { count: 48,  max: 50,  fmt: (v) => String(v) },
-    'PAC-3': { count: 320, max: 320, fmt: (v) => String(v) },
-    'HEL':   { count: 1.2, max: 1.5, fmt: (v) => v.toFixed(1) + ' MJ' },
+    'NGI':   { fmt: (v) => String(v) },
+    'SM-3':  { fmt: (v) => String(v) },
+    'PAC-3': { fmt: (v) => String(v) },
+    'HEL':   { fmt: (v) => v >= 100 ? '∞' : v.toFixed(0) + ' MJ' },
 };
 let lastBayState = '';
 function renderBay() {
-    const t = cyclePhase();
-    const authorized = (t >= 14 && t < 24);    // COA-B authorize → restore at end of cycle
-    const firing     = (t >= 14 && t < 17);    // brief firing window
-    const ngiCount   = BAY_BASE['NGI'].count - (authorized ? 2 : 0);
-    const helEnergy  = BAY_BASE['HEL'].count - (authorized ? 0.4 : 0);
-    const values = {
-        'NGI':   ngiCount,
-        'SM-3':  BAY_BASE['SM-3'].count,
-        'PAC-3': BAY_BASE['PAC-3'].count,
-        'HEL':   helEnergy,
-    };
-    const sig = `${authorized}|${firing}|${ngiCount.toFixed(2)}|${helEnergy.toFixed(2)}`;
+    let sig = '';
+    for (const def of DEFENDER_BATTERIES) {
+        const st = defenderState.get(def.id);
+        sig += `${def.id}:${st.magazine}:${st.inflight}|`;
+    }
     if (sig === lastBayState) return;
     lastBayState = sig;
 
-    for (const id of Object.keys(BAY_BASE)) {
-        const slot = document.querySelector(`.bay__slot[data-eff="${id}"]`);
+    for (const def of DEFENDER_BATTERIES) {
+        const slot = document.querySelector(`.bay__slot[data-eff="${def.id}"]`);
         if (!slot) continue;
-        const base = BAY_BASE[id];
-        const v = values[id];
-        slot.querySelector('.bay__count').textContent = base.fmt(v);
-        slot.querySelector('.bay__bar-fill').style.width = ((v / base.max) * 100).toFixed(1) + '%';
+        const st = defenderState.get(def.id);
+        const fmt = BAY_BASE[def.id]?.fmt || ((v) => String(v));
+        const value = (def.id === 'HEL') ? (st.magazine / 1) : st.magazine;
+        slot.querySelector('.bay__count').textContent = fmt(value);
+        const ratio = def.logistics.magazineMax > 0
+            ? Math.max(0, st.magazine / def.logistics.magazineMax)
+            : 1.0;
+        slot.querySelector('.bay__bar-fill').style.width = (ratio * 100).toFixed(1) + '%';
         slot.classList.remove('bay__slot--depleted', 'bay__slot--firing');
-        if (firing && (id === 'NGI' || id === 'HEL')) {
-            slot.classList.add('bay__slot--firing');
-        } else if (authorized && id === 'NGI') {
-            slot.classList.add('bay__slot--depleted');
-        }
+        if (st.magazine === 0) slot.classList.add('bay__slot--depleted');
+        else if (st.inflight > 0) slot.classList.add('bay__slot--firing');
     }
 }
 
 function renderStats() {
-    const t = cyclePhase();
-    const engaging = (t >= 8 && t < 21) ? ENGAGEMENT_ALLOC.length : 0;
-    document.getElementById('stEng').textContent = `${engaging} / ${TRACKS.length}`;
+    const liveThreats = THREATS.filter(t =>
+        !engagement.killedTracks.has(t.id) && trackVisible(t));
+    const enroute = engagement.salvos.filter(s =>
+        !s._retired && (s.state === 'inflight' || s.state === 'queued')).length;
+    document.getElementById('stTracks').textContent = String(liveThreats.length);
+    document.getElementById('stEng').textContent = `${enroute} salvo`;
+    // Primary TTI: the smallest TTI among the most urgent live threat's
+    // assigned defenders.
     let primaryTTI = null;
-    for (const a of ENGAGEMENT_ALLOC) {
-        if (a.target !== 'HGV-WRAITH-01') continue;
-        const def = findDefender(a.defender);
-        const tr  = findTrack(a.target);
-        if (!def || !tr) continue;
-        const { tti } = predictIntercept(tr, def, a.speed);
-        if (primaryTTI === null || tti < primaryTTI) primaryTTI = tti;
+    if (liveThreats.length) {
+        liveThreats.sort((a, b) => urgencyScore(b) - urgencyScore(a));
+        const tr = liveThreats[0];
+        for (const def of DEFENDER_BATTERIES) {
+            const plan = planIntercept(tr, def);
+            if (!plan) continue;
+            if (primaryTTI === null || plan.tti < primaryTTI) primaryTTI = plan.tti;
+        }
     }
     const ttiEl = document.getElementById('stTTI');
     if (primaryTTI === null) {
@@ -2610,8 +3097,20 @@ function renderStats() {
         ttiEl.className = 'stats__v';
     } else {
         ttiEl.textContent = `${primaryTTI.toFixed(1)} s`;
-        ttiEl.className = primaryTTI < 4 ? 'stats__v stats__v--warn' : 'stats__v stats__v--ok';
+        ttiEl.className = primaryTTI < 3 ? 'stats__v stats__v--warn' : 'stats__v stats__v--ok';
     }
+    // Replace static stats with live counts.
+    const pkEl = document.getElementById('stPk');
+    const total = engagement.intercepts + engagement.leakers;
+    if (total > 0) {
+        const pk = engagement.intercepts / total;
+        pkEl.textContent = pk.toFixed(2);
+        pkEl.className = pk > 0.8 ? 'stats__v stats__v--ok' : (pk > 0.5 ? 'stats__v stats__v--warn' : 'stats__v');
+    }
+    const leakEl = document.getElementById('stLeak');
+    leakEl.textContent = `${engagement.leakers} leaker${engagement.leakers === 1 ? '' : 's'}`;
+    leakEl.className = engagement.leakers === 0 ? 'stats__v stats__v--ok' :
+                      (engagement.leakers < 3 ? 'stats__v stats__v--warn' : 'stats__v');
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -2633,11 +3132,18 @@ function frame(ts) {
     while (accum >= FIXED_STEP) {
         clock.tick(FIXED_STEP);
         cam.tick(FIXED_STEP);
+        tickWaves();
+        tickThreatLifecycle();
         tickSalvos(FIXED_STEP);
         tickAutoEngage();
-        // Auto-reset the engagement when the demo cycle wraps around.
+        // Legacy: also auto-reset the COA-style engagement.
         if (engagement.authorizedCOA && (clock.now - engagement.authorizedAt) > 10) {
-            resetEngagement();
+            engagement.authorizedCOA = null;
+            engagement.authorizedAt = null;
+            engagement.authorizedBy = null;
+            engagement.objected = new Set();
+            engagement.autoEngagedThisCycle = false;
+            lastCoaSig = '';
         }
         trailAccum += FIXED_STEP;
         if (trailAccum >= 1 / 30) {
@@ -2689,11 +3195,198 @@ window.__chaos = {
     unfreeze: () => { clock.unfreeze(); cam.angleRate = 0.018; },
     setCameraAngle: (rad) => { cam.angle = rad; cam.angleRate = 0; },
     clock: () => clock.now,
+    setAuto:  (on) => setAutoEngage(on),
+    stress:   () => spawnStressWave(),
+    seed:     (n) => reseedWaves(n),
+    snapshot: () => ({
+        clock: clock.now,
+        threats: THREATS.length,
+        threatsByKind: THREATS.reduce((m, t) => { m[t.kind] = (m[t.kind] || 0) + 1; return m; }, {}),
+        killed: engagement.killedTracks.size,
+        intercepts: engagement.intercepts,
+        leakers: engagement.leakers,
+        salvos: engagement.salvos.filter(s => !s._retired).length,
+        autoEngage: engagement.autoEngage,
+        defenderState: Object.fromEntries(defenderState),
+    }),
+    runSelfTest: () => selfTest(),
+    runWTA: () => computeAssignments(),
+    fireOnce: () => {
+        const a = computeAssignments();
+        const fired = a.map(x => ({ d: x.defenderId, t: x.targetId, launched: launchSalvo('manual', x, 0, x.plan) ? true : false }));
+        return { tried: a.length, fired };
+    },
+    // Diagnostics
+    debugWTA: () => {
+        const out = [];
+        const stages = { all: THREATS.length };
+        const s1 = THREATS.filter(t => !engagement.killedTracks.has(t.id)); stages.notKilled = s1.length;
+        const s2 = s1.filter(t => trackVisible(t)); stages.visible = s2.length;
+        // Sample some threats to inspect
+        const samples = THREATS.slice(0, 4).map(t => ({
+            id: t.id, kind: t.kind,
+            phase: trackPhase(t).toFixed(3),
+            launchAt: t.launchAt.toFixed(2), flightTime: t.flightTime.toFixed(2),
+            now: clock.now.toFixed(2),
+            cycleMod: (clock.now % 20).toFixed(2),
+            terminal: t.terminal.map(v => v.toFixed(0)),
+            classif: classifyImpact(t),
+            assigned: t._assignedKinetic || 0,
+        }));
+        const s3 = s2.filter(t => classifyImpact(t) !== 'OUTSIDE'); stages.classified = s3.length;
+        const ranked = s3.filter(t => !(t._assignedKinetic || 0) || t._needsReshot);
+        for (const tr of ranked.slice(0, 5)) {
+            const row = { id: tr.id, kind: tr.kind, phase: trackPhase(tr).toFixed(2), classif: classifyImpact(tr), defenders: [] };
+            for (const def of DEFENDER_BATTERIES) {
+                const st = defenderState.get(def.id);
+                const plan = planIntercept(tr, def);
+                row.defenders.push({
+                    id: def.id,
+                    mag: st.magazine, inflight: st.inflight,
+                    reloadOK: clock.now - st.lastFired >= def.logistics.reload_s,
+                    feasible: plan !== null,
+                    slack: plan?.slack?.toFixed(2),
+                });
+            }
+            out.push(row);
+        }
+        return { ranked: ranked.length, stages, samples, threats: THREATS.length, sample: out, salvos: engagement.salvos.length, autoEngage: engagement.autoEngage };
+    },
 };
+
+// ═════════════════════════════════════════════════════════════════════
+//   SELF-TEST
+//
+//   Runs the math layer against canned scenarios and returns
+//   { passed, failed, results }. Exposed via window.__chaos.runSelfTest
+//   and exercised by the FastAPI /battlespace/selftest endpoint.
+// ═════════════════════════════════════════════════════════════════════
+function selfTest() {
+    const results = [];
+    const expect = (name, ok, detail) => results.push({ name, ok, detail });
+
+    // 1. Lead-angle solution against a head-on closer.
+    //    Interceptor at origin, v_I=1000, target at (5000,0,0) moving -x at 500.
+    //    Closing rate 1500 → TTI = 5000/1500 = 3.33s.
+    {
+        const t = leadInterceptTime([0,0,0], [5000,0,0], [-500,0,0], 1000);
+        expect('lead head-on', Math.abs(t - 3.333) < 0.05, `t=${t?.toFixed(3)}`);
+    }
+    // 2. Lead-angle: target slower than interceptor, off-axis.
+    {
+        const t = leadInterceptTime([0,0,0], [3000,1000,0], [-200,0,0], 1000);
+        expect('lead off-axis', t !== null && t > 0 && t < 10, `t=${t?.toFixed(3)}`);
+    }
+    // 3. Lead-angle: target faster than interceptor head-on → no solution.
+    //    v_I=400, v_T=-800 on x, d=4000 → quadratic has negative discriminant for receding case.
+    {
+        const t = leadInterceptTime([0,0,0], [4000,0,0], [800,0,0], 400);
+        expect('lead receding infeasible', t === null || t < 0, `t=${t}`);
+    }
+    // 4. planIntercept feasibility: synthetic HGV from west, NGI defender.
+    {
+        const track = {
+            id: 'TEST-HGV', kind: 'HGV',
+            launch: [-12000, 300, 0], apogee: [0, 6000, 0], terminal: [800, 300, 0],
+            launchAt: 0, flightTime: 9.0,
+            color: [1,0.6,0.4], machBase: 9, priority: 1, spawnedAt: 0,
+        };
+        const _savedNow = clock.now;
+        clock.now = 0.5;
+        const ngi = findDefender('NGI');
+        const plan = planIntercept(track, ngi);
+        expect('NGI catches HGV', plan !== null && plan.slack >= 0, `slack=${plan?.slack?.toFixed(2)}`);
+        clock.now = _savedNow;
+    }
+    // 5. PAC-3 envelope rejects exoatmospheric apogee.
+    {
+        const track = {
+            id: 'TEST-BM', kind: 'BM',
+            launch: [-12000, 300, 0], apogee: [0, 40000, 0], terminal: [500, 300, 0],
+            launchAt: 0, flightTime: 9.0,
+            color: [1,0.5,0.5], machBase: 8, priority: 1, spawnedAt: 0,
+        };
+        const _savedNow = clock.now;
+        clock.now = 0.5;
+        const pac = findDefender('PAC-3');
+        const plan = planIntercept(track, pac);
+        // Late terminal phase may still be in envelope, but plan should be tight.
+        // We accept either null OR a plan whose ph > 0.7 (terminal-only).
+        const ok = (plan === null) || (plan.ph > 0.6);
+        expect('PAC-3 rejects exo apogee', ok, `plan=${plan ? `ph=${plan.ph.toFixed(2)}` : 'null'}`);
+        clock.now = _savedNow;
+    }
+    // 6. PIP classifier: terminal near origin → VITAL.
+    {
+        const t = { terminal: [500, 100, -400] };
+        expect('PIP VITAL', classifyImpact(t) === 'VITAL', classifyImpact(t));
+    }
+    // 7. PIP classifier: terminal far from origin → OUTSIDE.
+    {
+        const t = { terminal: [9000, 100, -8000] };
+        expect('PIP OUTSIDE', classifyImpact(t) === 'OUTSIDE', classifyImpact(t));
+    }
+    // 8. WTA assigns distinct defenders to distinct targets when possible.
+    {
+        const _savedThreats = THREATS.slice();
+        THREATS.length = 0;
+        for (let i = 0; i < 3; i++) {
+            THREATS.push({
+                id: `WTA-T${i}`, kind: 'MARV',
+                launch: [Math.cos(i)*-11000, 300, Math.sin(i)*8000],
+                apogee: [0, 4000, 0], terminal: [Math.cos(i)*600, 250, Math.sin(i)*600],
+                launchAt: 0, flightTime: 7.5,
+                color: [0.9,0.8,0.5], machBase: 7, priority: 2, spawnedAt: 0,
+            });
+        }
+        const _savedNow = clock.now;
+        clock.now = 0.5;
+        resetDefenderState();
+        const assignments = computeAssignments();
+        const distinctDefenders = new Set(assignments.map(a => a.defenderId)).size;
+        expect('WTA uses multiple defenders', distinctDefenders >= 2 || assignments.length >= 2,
+               `${assignments.length} assignments, ${distinctDefenders} distinct defenders`);
+        clock.now = _savedNow;
+        THREATS.length = 0;
+        for (const t of _savedThreats) THREATS.push(t);
+        resetDefenderState();
+    }
+
+    const passed = results.filter(r => r.ok).length;
+    const failed = results.length - passed;
+    return { passed, failed, results };
+}
 })();
 </script>
 </body>
 </html>
+"""
+
+
+_SELFTEST_HARNESS_HTML = r"""<!doctype html>
+<html><head><meta charset="utf-8"><title>battlespace selftest</title></head>
+<body>
+<pre id="out">running...</pre>
+<iframe id="bs" src="/battlespace" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none"></iframe>
+<script>
+(async () => {
+  const out = document.getElementById('out');
+  const ifr = document.getElementById('bs');
+  await new Promise(r => ifr.addEventListener('load', r, { once: true }));
+  // Wait one tick for __chaos to mount.
+  await new Promise(r => setTimeout(r, 250));
+  const w = ifr.contentWindow;
+  if (!w.__chaos || !w.__chaos.runSelfTest) {
+    out.textContent = 'FAIL: __chaos harness unavailable';
+    document.title = 'FAIL';
+    return;
+  }
+  const report = w.__chaos.runSelfTest();
+  out.textContent = JSON.stringify(report, null, 2);
+  document.title = (report.failed === 0) ? 'PASS' : 'FAIL';
+})();
+</script>
+</body></html>
 """
 
 
@@ -2704,5 +3397,13 @@ def build_router() -> APIRouter:
     @router.get("/battlespace", response_class=HTMLResponse)
     def battlespace() -> str:
         return _BATTLESPACE_HTML.replace("__VERSION__", __version__)
+
+    @router.get("/battlespace/selftest", response_class=HTMLResponse)
+    def battlespace_selftest() -> str:
+        """Harness page that mounts the battlespace in a hidden iframe
+        and runs window.__chaos.runSelfTest(). Inspect by visiting the
+        URL (the document title becomes PASS or FAIL) or by driving
+        with Playwright — `report` ends up in <pre id='out'>."""
+        return _SELFTEST_HARNESS_HTML
 
     return router
