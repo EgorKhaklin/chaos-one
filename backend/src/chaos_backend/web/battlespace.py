@@ -3166,27 +3166,16 @@ function drawSalvos() {
             ctx.lineTo(projP.sx, projP.sy);
             ctx.stroke();
         }
-        // Hot leading dot + halo. Both scale by camera depth so distant
-        // interceptors read as crisp point lights, not the cloud-shaped
-        // blobs they were when the radius was a fixed 14 px. When
-        // orphaned, the head darkens in step with the trail fade.
+        // Interceptor head — a small solid dot in the defender's
+        // accent colour. No white halo / hot core: the missile just
+        // reads as a coloured pinprick scaled by camera distance.
+        // When orphaned, the dot darkens in step with the trail fade.
         const headBright = s.state === 'orphaned' ? trailFade : 1;
-        // depth ranges from ~2 km (very close) to ~25 km+ (far). At 5 km
-        // we want a ~7 px halo, at 25 km we want a ~3 px halo. Clamp.
         const depth = projP.depth || 10_000;
-        const haloR  = Math.max(2.6, Math.min(7.0, 12_000 / depth));
-        const coreR  = Math.max(0.9, Math.min(2.0,  6_000 / depth));
-        const halo = ctx.createRadialGradient(projP.sx, projP.sy, 0, projP.sx, projP.sy, haloR);
-        halo.addColorStop(0.00, rgbStr(s.color, 0.85 * headBright));
-        halo.addColorStop(0.50, rgbStr(s.color, 0.32 * headBright));
-        halo.addColorStop(1.00, rgbStr(s.color, 0.00));
-        ctx.fillStyle = halo;
+        const dotR = Math.max(1.0, Math.min(2.4, 7_500 / depth));
+        ctx.fillStyle = rgbStr(s.color, 0.95 * headBright);
         ctx.beginPath();
-        ctx.arc(projP.sx, projP.sy, haloR, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = `rgba(255,255,255,${0.85 * headBright})`;
-        ctx.beginPath();
-        ctx.arc(projP.sx, projP.sy, coreR, 0, Math.PI * 2);
+        ctx.arc(projP.sx, projP.sy, dotR, 0, Math.PI * 2);
         ctx.fill();
     }
 }
