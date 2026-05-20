@@ -345,6 +345,25 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             text-align: center;
         }
 
+        /* ─── Generic collapsible panel ─── */
+        .panel__header {
+            cursor: pointer;
+            user-select: none;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .panel__chevron {
+            display: inline-block;
+            width: 0; height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 5px solid currentColor;
+            transition: transform var(--t-fast);
+        }
+        .panel--collapsed .panel__chevron { transform: rotate(-90deg); }
+        .panel--collapsed .panel__body { display: none; }
+        .panel--collapsed.adv,
+        .panel--collapsed.stats { padding-bottom: 8px; }
+
         /* ─── Adversary Mirror (bottom-left) ─── */
         .adv {
             bottom: 64px; left: 24px;
@@ -633,13 +652,18 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         <div class="decisions__hint">ENTER AUTH · O OBJECT · T AUTO · S STRESS</div>
     </div>
 
-    <div class="overlay adv">
-        <div class="adv__title">ADVERSARY MIRROR</div>
-        <div class="adv__rule"></div>
-        <div id="hypStack"></div>
-        <div class="cost">
-            <div class="cost__lbl" id="costLabel">COST IMPOSITION +13% ADV</div>
-            <div class="cost__spark" id="costSpark"></div>
+    <div class="overlay adv" id="advPanel">
+        <div class="adv__title panel__header" data-target="advPanel">
+            <span class="panel__chevron"></span>
+            ADVERSARY MIRROR
+        </div>
+        <div class="panel__body">
+            <div class="adv__rule"></div>
+            <div id="hypStack"></div>
+            <div class="cost">
+                <div class="cost__lbl" id="costLabel">COST IMPOSITION +13% ADV</div>
+                <div class="cost__spark" id="costSpark"></div>
+            </div>
         </div>
     </div>
 
@@ -668,21 +692,27 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         <div class="calm__list" id="calmList"></div>
     </div>
 
-    <div class="overlay stats">
-        <div class="stats__title">ENGAGEMENT STATE</div>
-        <div class="stats__rule"></div>
-        <div class="stats__row"><span class="stats__k">ACTIVE TRACKS</span><span class="stats__v" id="stTracks">3</span></div>
-        <div class="stats__row"><span class="stats__k">UNDER ENG.</span><span class="stats__v" id="stEng">0 / 3</span></div>
-        <div class="stats__row"><span class="stats__k">PRIMARY TTI</span><span class="stats__v" id="stTTI">—</span></div>
-        <div class="stats__row"><span class="stats__k">EXP. Pk (SHOT)</span><span class="stats__v stats__v--ok" id="stPk">0.93</span></div>
-        <div class="stats__row"><span class="stats__k">EXP. LEAKAGE</span><span class="stats__v stats__v--ok" id="stLeak">5%</span></div>
-        <div class="stats__row"><span class="stats__k">ROE</span><span class="stats__v" id="stRoe">ROE-2 (RESTR.)</span></div>
-        <div class="stats__row"><span class="stats__k">PQC POSTURE</span><span class="stats__v stats__v--ok" id="stPqc">HYBRID</span></div>
+    <div class="overlay stats" id="statsPanel">
+        <div class="stats__title panel__header" data-target="statsPanel">
+            <span class="panel__chevron"></span>
+            ENGAGEMENT STATE
+        </div>
+        <div class="panel__body">
+            <div class="stats__rule"></div>
+            <div class="stats__row"><span class="stats__k">ACTIVE TRACKS</span><span class="stats__v" id="stTracks">3</span></div>
+            <div class="stats__row"><span class="stats__k">UNDER ENG.</span><span class="stats__v" id="stEng">0 / 3</span></div>
+            <div class="stats__row"><span class="stats__k">PRIMARY TTI</span><span class="stats__v" id="stTTI">—</span></div>
+            <div class="stats__row"><span class="stats__k">EXP. Pk (SHOT)</span><span class="stats__v stats__v--ok" id="stPk">0.93</span></div>
+            <div class="stats__row"><span class="stats__k">EXP. LEAKAGE</span><span class="stats__v stats__v--ok" id="stLeak">5%</span></div>
+            <div class="stats__row"><span class="stats__k">ROE</span><span class="stats__v" id="stRoe">ROE-2 (RESTR.)</span></div>
+            <div class="stats__row"><span class="stats__k">PQC POSTURE</span><span class="stats__v stats__v--ok" id="stPqc">HYBRID</span></div>
+        </div>
     </div>
 
     <div class="overlay wm">
         <div class="wm__big">CHAOS ONE</div>
         <div>BATTLESPACE · v__VERSION__</div>
+        <div id="camBadge" style="margin-top:4px;color:rgba(150,220,160,0.55);"></div>
     </div>
 
 <script>
@@ -804,6 +834,17 @@ class Camera {
         this.angle     = -2.05;
         this.angleRate = 0.018;
         this.fovDeg    = 40;
+        // Bounds (operator can't dive into the floor or fly to the moon).
+        this.minRadius = 2_500;
+        this.maxRadius = 60_000;
+        this.minHeight = 200;
+        this.maxHeight = 35_000;
+        // Free-cam state: any mouse interaction sets `interacted` and
+        // suspends the auto-orbit; auto-orbit resumes after IDLE_RESUME.
+        this.interacted    = 0;        // sec on clock
+        this.idleResume    = 4.0;
+        // 'C' key locks the camera entirely (toggles free-cam mode).
+        this.freeCamLocked = false;
     }
     eye() {
         return [
@@ -813,7 +854,40 @@ class Camera {
         ];
     }
     target() { return [this.pivot[0], this.pivot[1] + this.lookAtY, this.pivot[2]]; }
-    tick(dt) { this.angle += this.angleRate * dt; }
+    tick(dt) {
+        // Auto-orbit only when the operator hasn't touched the camera
+        // recently and free-cam isn't locked.
+        if (this.freeCamLocked) return;
+        const idleFor = clock.now - this.interacted;
+        if (idleFor < this.idleResume) return;
+        this.angle += this.angleRate * dt;
+    }
+    nudgeOrbit(dyaw, dheight) {
+        this.angle += dyaw;
+        this.height = Math.max(this.minHeight, Math.min(this.maxHeight, this.height + dheight));
+        this.interacted = clock.now;
+    }
+    zoom(factor) {
+        // factor > 1 zooms out, < 1 zooms in. Multiplicative so the
+        // operator gets a smooth feel from 2.5 km to 60 km.
+        this.radius = Math.max(this.minRadius, Math.min(this.maxRadius, this.radius * factor));
+        // Subtle elevation tracking so the camera doesn't bury itself
+        // when zooming in close: height tracks radius via a soft floor.
+        this.height = Math.max(this.minHeight, Math.min(this.maxHeight, this.height * Math.sqrt(factor)));
+        this.interacted = clock.now;
+    }
+    home() {
+        this.pivot     = [0, 0, 0];
+        this.radius    = 14_500;
+        this.height    = 6_000;
+        this.lookAtY   = 1_400;
+        this.angle     = -2.05;
+        this.interacted = clock.now;
+    }
+    toggleFreeCam() {
+        this.freeCamLocked = !this.freeCamLocked;
+        this.interacted = clock.now;
+    }
 }
 
 class Projector {
@@ -1373,6 +1447,56 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
+
+// ═════════════════════════════════════════════════════════════════════
+//   CAMERA INTERACTION (free-cam)
+//
+//   • mouse wheel       → zoom (multiplicative; smooth feel 2.5-60 km)
+//   • left-drag         → orbit (horizontal: yaw, vertical: elevation)
+//   • C key             → lock free-cam (suspends auto-orbit until
+//                          pressed again); auto-orbit also pauses for
+//                          4 s after any mouse interaction
+//   • Home / =          → reset camera to default
+//   The canvas takes pointer-events; the overlay HTML stays clickable
+//   because the canvas is below it in DOM stacking.
+// ═════════════════════════════════════════════════════════════════════
+canvas.style.cursor = 'grab';
+canvas.style.touchAction = 'none';      // prevent browser scroll on wheel
+
+canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    // Normalised delta: wheel "ticks" zoom by ~12% per notch.
+    const delta = Math.sign(e.deltaY);
+    const factor = (delta > 0) ? 1.12 : 0.89;
+    cam.zoom(factor);
+}, { passive: false });
+
+let drag = null;
+canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;       // left button only
+    canvas.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+    canvas.style.cursor = 'grabbing';
+});
+canvas.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    // Horizontal: 0.5° per pixel feels right.
+    const dyaw = -dx * (Math.PI / 180) * 0.5;
+    // Vertical: 12 m per pixel.
+    const dheight = -dy * 30;
+    cam.nudgeOrbit(dyaw, dheight);
+});
+canvas.addEventListener('pointerup', (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    canvas.releasePointerCapture(e.pointerId);
+    drag = null;
+    canvas.style.cursor = 'grab';
+});
+canvas.addEventListener('pointercancel', () => { drag = null; canvas.style.cursor = 'grab'; });
 
 const snap = (v) => Math.round(v) + 0.5;     // crisp 1-pixel strokes
 const rgbStr = (c, a) => {
@@ -2920,6 +3044,11 @@ document.addEventListener('keydown', (e) => {
         setAutoEngage(!engagement.autoEngage);
     } else if (e.key === 's' || e.key === 'S') {
         spawnStressWave();
+    } else if (e.key === 'c' || e.key === 'C') {
+        cam.toggleFreeCam();
+    } else if (e.key === 'Home' || e.key === '=') {
+        cam.home();
+        cam.freeCamLocked = false;
     }
 });
 
@@ -2985,6 +3114,17 @@ document.getElementById('decisionsTitle').addEventListener('click', () => {
     const isCollapsed = panel.classList.contains('decisions--collapsed');
     setDecisionsCollapsed(!isCollapsed);
     _decisionsManualToggle = true;
+});
+
+// ─── Generic collapsible panel handler ───────────────────────────────
+document.querySelectorAll('.panel__header').forEach(h => {
+    h.addEventListener('click', () => {
+        const id = h.dataset.target;
+        if (!id) return;
+        const panel = document.getElementById(id);
+        if (!panel) return;
+        panel.classList.toggle('panel--collapsed');
+    });
 });
 function applyAutoCollapse() {
     // When AUTO is on we collapse the panel by default; the operator
@@ -3124,6 +3264,26 @@ const CALM_BASE = [
 ];
 const CALM_LIVE = CALM_BASE.slice();    // mutable; operator events unshift here
 let lastCalmK = -1;
+// Tiny camera-state badge near the watermark — shows zoom level and a
+// "FREE-CAM" indicator while the operator has locked the orbit.
+let lastCamSig = '';
+function renderCamBadge() {
+    const el = document.getElementById('camBadge');
+    if (!el) return;
+    const km = (cam.radius / 1000).toFixed(1);
+    const lockTag = cam.freeCamLocked ? ' · FREE-CAM' : '';
+    const idleFor = clock.now - cam.interacted;
+    const driving = idleFor < cam.idleResume && !cam.freeCamLocked;
+    const sig = `${km}|${lockTag}|${driving}`;
+    if (sig === lastCamSig) return;
+    lastCamSig = sig;
+    const drivingTag = driving ? ' · MANUAL' : '';
+    el.textContent = `CAM · ${km} km${lockTag}${drivingTag}`;
+    el.style.color = cam.freeCamLocked
+        ? 'rgba(220, 160, 60, 0.85)'
+        : (driving ? 'rgba(150, 220, 160, 0.75)' : 'rgba(150, 220, 160, 0.45)');
+}
+
 function renderCalm() {
     const k = Math.floor(clock.now * 0.4) % CALM_LIVE.length;
     if (k === lastCalmK) return;
@@ -3277,6 +3437,7 @@ function frame(ts) {
     renderStats();
     renderBay();
     renderCalm();
+    renderCamBadge();
 
     requestAnimationFrame(frame);
 }
