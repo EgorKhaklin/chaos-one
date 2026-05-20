@@ -2903,17 +2903,14 @@ function tickSalvos(dt) {
         }
 
         if (s.state === 'orphaned') {
-            // Coast on existing velocity, sample the trail, and trigger
-            // a self-destruct after a short window OR if the missile
-            // hits the deck.
-            const ORPHAN_COAST = 1.4;
+            // Short coast then a visible safety-fuze self-destruct.
+            // Coast is intentionally brief so orphaned interceptors
+            // don't fly off across the screen — the trail fades out
+            // over the same window in drawSalvos.
+            const ORPHAN_COAST = 0.55;
             s.position = V3.add(s.position, V3.scale(s.velocity, dt));
-            const samplePeriod = 1 / 30;
-            if (!s._lastSampled || (clock.now - s._lastSampled) >= samplePeriod) {
-                s.trail.push(s.position.slice());
-                if (s.trail.length > 48) s.trail.shift();
-                s._lastSampled = clock.now;
-            }
+            // Stop sampling new trail points while orphaned — we want
+            // the existing tail to fade out, not grow.
             const expired = (clock.now - s.orphanedAt) > ORPHAN_COAST;
             const grounded = s.position[1] < 20;
             if (expired || grounded) {
@@ -3118,12 +3115,21 @@ function drawSalvos() {
         }
         // Kinetic: hot dot + curving smoke trail from the actual path.
         if (!projP) continue;
-        if (s.trail && s.trail.length >= 2) {
-            // Draw the trail as a polyline whose alpha and width grow
-            // toward the leading dot. Includes the defender launch
-            // point as the oldest sample.
+        // While orphaned, fade the entire trail out across the coast
+        // window so the smoke dissipates instead of trailing off into
+        // the distance.
+        const ORPHAN_COAST_SEC = 0.55;
+        const trailFade = (s.state === 'orphaned' && s.orphanedAt != null)
+            ? Math.max(0, 1 - (clock.now - s.orphanedAt) / ORPHAN_COAST_SEC)
+            : 1;
+        if (s.trail && s.trail.length >= 2 && trailFade > 0) {
+            // Polyline whose alpha + width grow toward the head. While
+            // orphaned, multiply alpha by `trailFade` so the older
+            // (defender-end) tail dissipates first.
             const pts = s.trail.slice();
-            if (defScreen && def) pts.unshift([def.pos[0], 380, def.pos[2]]);
+            if (defScreen && def && s.state !== 'orphaned') {
+                pts.unshift([def.pos[0], 380, def.pos[2]]);
+            }
             pts.push(s.position);
             const n = pts.length;
             for (let i = 1; i < n; i++) {
@@ -3132,9 +3138,14 @@ function drawSalvos() {
                 if (!a || !b) continue;
                 const age = i / n;
                 const width = 0.8 + age * 2.0;
-                const alpha = Math.pow(age, 1.4);
+                let alpha = Math.pow(age, 1.4);
+                if (s.state === 'orphaned') {
+                    // Older portions fade faster — by the time the
+                    // self-destruct fires, only the head is faintly lit.
+                    alpha *= Math.pow(trailFade, 1.2) * Math.pow(age, 1.0);
+                }
                 ctx.strokeStyle = rgbStr(s.color, alpha * 0.95);
-                ctx.lineWidth = width;
+                ctx.lineWidth = width * (s.state === 'orphaned' ? trailFade : 1);
                 ctx.lineCap = 'round';
                 ctx.beginPath();
                 ctx.moveTo(a.sx, a.sy);
@@ -3150,16 +3161,19 @@ function drawSalvos() {
             ctx.lineTo(projP.sx, projP.sy);
             ctx.stroke();
         }
-        // Hot leading dot + halo
+        // Hot leading dot + halo — when orphaned, the head darkens
+        // alongside the trail so the missile visibly "burns out"
+        // before the self-destruct flash.
+        const headBright = s.state === 'orphaned' ? trailFade : 1;
         const halo = ctx.createRadialGradient(projP.sx, projP.sy, 0, projP.sx, projP.sy, 14);
-        halo.addColorStop(0.00, rgbStr(s.color, 0.95));
-        halo.addColorStop(0.45, rgbStr(s.color, 0.40));
+        halo.addColorStop(0.00, rgbStr(s.color, 0.95 * headBright));
+        halo.addColorStop(0.45, rgbStr(s.color, 0.40 * headBright));
         halo.addColorStop(1.00, rgbStr(s.color, 0.00));
         ctx.fillStyle = halo;
         ctx.beginPath();
         ctx.arc(projP.sx, projP.sy, 14, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+        ctx.fillStyle = `rgba(255,255,255,${0.95 * headBright})`;
         ctx.beginPath();
         ctx.arc(projP.sx, projP.sy, 2.4, 0, Math.PI * 2);
         ctx.fill();
