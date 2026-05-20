@@ -2358,7 +2358,12 @@ function drawImpactPredictions() {
 //   Keyed by track id so the THREATS list can be dynamic without
 //   invalidating per-track history.
 // ═════════════════════════════════════════════════════════════════════
-const TRAIL_SAMPLES = 72;
+// 12 samples at 30 Hz = 0.4 s of recent flight history. Threats
+// traverse the visual world at 3-8 km/s (faster than their displayed
+// Mach number because the trajectory compresses the flight time),
+// so anything longer than half a second renders as a multi-km streak
+// running from beyond the mountain ring to the current head.
+const TRAIL_SAMPLES = 12;
 const trailsByTrack = new Map();
 
 function pushTrailSamples() {
@@ -3036,7 +3041,7 @@ function tickSalvos(dt) {
             const samplePeriod = 1 / 30;
             if (!s._lastSampled || (clock.now - s._lastSampled) >= samplePeriod) {
                 s.trail.push(s.position.slice());
-                if (s.trail.length > 24) s.trail.shift();   // ~0.8 s of trail history
+                if (s.trail.length > 14) s.trail.shift();   // ~0.47 s of trail history
                 s._lastSampled = clock.now;
             }
         }
