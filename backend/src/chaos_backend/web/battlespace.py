@@ -349,6 +349,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         .panel__header {
             cursor: pointer;
             user-select: none;
+            pointer-events: auto;        /* parents are pointer-events:none */
             display: flex; align-items: center; gap: 6px;
         }
         .panel__chevron {
@@ -1051,13 +1052,112 @@ const COMPASS = [
     { id: 'W', pos: [-13_200, 0,      0] },
 ];
 
-// Defended assets — small hex markers tucked inside the defender ring.
-const ASSETS = [
-    { id: 'COMMAND', pos: hexPosition(  45, 1_400) },
-    { id: 'PORT',    pos: hexPosition( 135, 1_400) },
-    { id: 'GRID',    pos: hexPosition( 225, 1_400) },
-    { id: 'NODE-7',  pos: hexPosition( 315, 1_400) },
+// Named landmark buildings — placed at fixed bearings inside the
+// defender ring. Each is a tall labelled building in the procedural
+// city below. The labels show in the operator display so the operator
+// always knows which asset they're protecting.
+const LANDMARKS = [
+    { id: 'COMMAND', pos: hexPosition(  45, 1_300), w: 200, d: 200, h: 540 },
+    { id: 'PORT',    pos: hexPosition( 135, 1_500), w: 180, d: 260, h: 400 },
+    { id: 'GRID',    pos: hexPosition( 225, 1_400), w: 220, d: 160, h: 460 },
+    { id: 'NODE-7',  pos: hexPosition( 315, 1_350), w: 160, d: 160, h: 380 },
 ];
+// Legacy name preserved so the existing assets-hex labels keep
+// pointing to the right world positions. (The hex render is replaced
+// by drawCity below.)
+const ASSETS = LANDMARKS;
+
+// ═════════════════════════════════════════════════════════════════════
+//   3D CITY GENERATOR
+//
+//   ~70 procedural buildings on a 180-m street grid inside the
+//   defender ring (radius < 2.4 km). Three building tiers:
+//
+//     • low-rise  (50-140 m tall)  — densest, fills the outskirts
+//     • mid-rise  (150-280 m tall) — common, mixed throughout
+//     • tower     (300-520 m tall) — sparse, "downtown core"
+//
+//   The four landmark towers (COMMAND/PORT/GRID/NODE-7) are placed
+//   first at their fixed bearings so the procedural fill respects
+//   their footprints.
+// ═════════════════════════════════════════════════════════════════════
+function makeCity(seed) {
+    const rng = mulberry32(seed);
+    const buildings = [];
+    const GRID = 180;
+    const CITY_R = 2_400;
+    const CENTRAL_PLAZA_R = 380;
+
+    // Place landmarks first.
+    for (const L of LANDMARKS) {
+        buildings.push({
+            cx: L.pos[0], cz: L.pos[2],
+            w: L.w, d: L.d, h: L.h,
+            tier: 'landmark',
+            label: L.id,
+            litness: 0.65,
+            tint: 0.95,
+            windowSeed: (L.id.charCodeAt(0) * 137.5) | 0,
+        });
+    }
+
+    // Then ~70 procedural fillers.
+    const placed = new Set();
+    // Seed the landmark grid cells so we don't drop a procedural
+    // building on top of one.
+    for (const b of buildings) {
+        const gx = Math.round(b.cx / GRID), gz = Math.round(b.cz / GRID);
+        for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
+            placed.add(`${gx + dx},${gz + dz}`);
+        }
+    }
+
+    let attempts = 0;
+    while (buildings.length < 74 && attempts < 800) {
+        attempts++;
+        const gx = Math.floor((rng() - 0.5) * 28);
+        const gz = Math.floor((rng() - 0.5) * 28);
+        const key = `${gx},${gz}`;
+        if (placed.has(key)) continue;
+        const cx = gx * GRID + (rng() - 0.5) * 30;
+        const cz = gz * GRID + (rng() - 0.5) * 30;
+        const r2 = cx * cx + cz * cz;
+        if (r2 > CITY_R * CITY_R) continue;
+        if (r2 < CENTRAL_PLAZA_R * CENTRAL_PLAZA_R) continue;
+        placed.add(key);
+
+        // Tier biased by distance from centre — downtown towers near
+        // the middle, low-rise on the outskirts.
+        const ringT = Math.sqrt(r2) / CITY_R;       // 0 centre → 1 edge
+        const tierRoll = rng() + ringT * 0.4;       // bias toward low-rise farther out
+        let w, d, h, tier;
+        if (tierRoll < 0.55) {
+            tier = 'low';
+            w = 35 + rng() * 55;
+            d = 35 + rng() * 55;
+            h = 50 + rng() * 90;
+        } else if (tierRoll < 0.92) {
+            tier = 'mid';
+            w = 60 + rng() * 70;
+            d = 60 + rng() * 70;
+            h = 150 + rng() * 130;
+        } else {
+            tier = 'tower';
+            w = 80 + rng() * 100;
+            d = 80 + rng() * 100;
+            h = 280 + rng() * 240;
+        }
+        buildings.push({
+            cx, cz, w, d, h, tier,
+            label: null,
+            litness: 0.35 + rng() * 0.45,
+            tint: 0.74 + rng() * 0.20,
+            windowSeed: (rng() * 100000) | 0,
+        });
+    }
+    return buildings;
+}
+const CITY = makeCity(0xC17B1D);
 
 // ═════════════════════════════════════════════════════════════════════
 //   THREAT TAXONOMY + PROCEDURAL WAVE GENERATOR
@@ -1236,7 +1336,7 @@ const engagement = {
     pulseUntil: 0,                // gold ring confirmation effect
     notice: null,                 // { text, until }
     pushedLog: new Set(),         // dedupe one-shot log lines
-    autoEngage: false,            // ROE weapons-free auto-authorization
+    autoEngage: false,            // initial state; setAutoEngage(true) is called on init
     autoEngagedThisCycle: false,  // dedupe per cycle (legacy COA path)
     _salvoSerial: 0,
     leakers: 0,
@@ -1887,31 +1987,127 @@ function drawCompass() {
 // ═════════════════════════════════════════════════════════════════════
 //   LAYER: defended assets + defender batteries
 // ═════════════════════════════════════════════════════════════════════
+// Draw the 3D city: each building is a cuboid with 8 vertices and 5
+// renderable faces (we never see the bottom). Each face is back-face
+// culled, Lambertian-shaded against the sun direction, and depth-
+// sorted across ALL buildings' faces (painter's algorithm) so closer
+// buildings correctly occlude the farther skyline.
 function drawAssets() {
-    for (const a of ASSETS) {
-        const g = proj.project(a.pos);
-        if (!g) continue;
-        const half = Math.max(3, 20 / Math.max(0.5, g.depth / 6500));
-        ctx.strokeStyle = 'rgba(232, 226, 208, 0.55)';
-        ctx.lineWidth = 1.0;
-        ctx.beginPath();
-        for (let i = 0; i < 6; i++) {
-            const t = (i / 6) * Math.PI * 2 + Math.PI / 6;
-            const px = g.sx + Math.cos(t) * half;
-            const py = g.sy + Math.sin(t) * half;
-            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    if (!CITY || CITY.length === 0) return;
+    const eye = cam.eye();
+    const allFaces = [];
+
+    for (const b of CITY) {
+        const hw = b.w * 0.5, hd = b.d * 0.5;
+        const x1 = b.cx - hw, x2 = b.cx + hw;
+        const z1 = b.cz - hd, z2 = b.cz + hd;
+        const verts = [
+            [x1, 0,    z1], // 0
+            [x2, 0,    z1], // 1
+            [x2, 0,    z2], // 2
+            [x1, 0,    z2], // 3
+            [x1, b.h,  z1], // 4
+            [x2, b.h,  z1], // 5
+            [x2, b.h,  z2], // 6
+            [x1, b.h,  z2], // 7
+        ];
+        // 5 visible faces (no floor):
+        //   top:    4-5-6-7   normal +Y
+        //   -Z:     0-1-5-4   normal -Z
+        //   +X:     1-2-6-5   normal +X
+        //   +Z:     3-2-6-7   normal +Z
+        //   -X:     0-3-7-4   normal -X
+        const faces = [
+            { idx: [4,5,6,7], normal: [ 0, 1, 0], kind: 'top' },
+            { idx: [0,1,5,4], normal: [ 0, 0,-1], kind: 'side' },
+            { idx: [1,2,6,5], normal: [ 1, 0, 0], kind: 'side' },
+            { idx: [3,2,6,7], normal: [ 0, 0, 1], kind: 'side' },
+            { idx: [0,3,7,4], normal: [-1, 0, 0], kind: 'side' },
+        ];
+
+        // Project once per building.
+        const prj = verts.map(v => proj.project(v));
+        if (prj.some(p => !p)) continue;
+
+        for (const f of faces) {
+            // Back-face cull via face centroid → eye direction.
+            let cx = 0, cy = 0, cz = 0;
+            for (const i of f.idx) {
+                cx += verts[i][0]; cy += verts[i][1]; cz += verts[i][2];
+            }
+            cx /= f.idx.length; cy /= f.idx.length; cz /= f.idx.length;
+            const toFaceX = cx - eye[0], toFaceY = cy - eye[1], toFaceZ = cz - eye[2];
+            const tLen = Math.hypot(toFaceX, toFaceY, toFaceZ) || 1;
+            const dotN = (f.normal[0] * toFaceX + f.normal[1] * toFaceY + f.normal[2] * toFaceZ) / tLen;
+            if (dotN > 0.02) continue;
+            const lambert = Math.max(0.18, f.normal[0]*SUN_DIR[0] + f.normal[1]*SUN_DIR[1] + f.normal[2]*SUN_DIR[2]);
+            allFaces.push({ b, idx: f.idx, prj, lambert, kind: f.kind, depth: tLen, faceNormal: f.normal });
         }
-        ctx.closePath();
-        ctx.stroke();
-        ctx.fillStyle = 'rgba(232, 226, 208, 0.72)';
+    }
+    allFaces.sort((a, b) => b.depth - a.depth);
+
+    for (const fa of allFaces) {
+        const b = fa.b;
+        const isLandmark = !!b.label;
+        // Building palette: cool concrete with a faint warm bias for
+        // landmarks. Lambert lifts the lit faces; sub-horizon faces
+        // sit just above the navy floor.
+        const baseR = (isLandmark ? 22 : 14) + b.tint * (isLandmark ? 75 : 65) * fa.lambert;
+        const baseG = (isLandmark ? 28 : 18) + b.tint * (isLandmark ? 78 : 70) * fa.lambert;
+        const baseB = (isLandmark ? 42 : 32) + b.tint * (isLandmark ? 95 : 88) * fa.lambert;
+        ctx.fillStyle = `rgb(${baseR|0},${baseG|0},${baseB|0})`;
+        const p = fa.idx.map(i => fa.prj[i]);
         ctx.beginPath();
-        ctx.arc(g.sx, g.sy, 1.4, 0, Math.PI * 2);
+        ctx.moveTo(p[0].sx, p[0].sy);
+        for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].sx, p[i].sy);
+        ctx.closePath();
         ctx.fill();
-        ctx.fillStyle = 'rgba(232, 226, 208, 0.50)';
-        ctx.font = '700 8px ui-monospace, "SF Mono", Menlo, monospace';
+        // Subtle edge so adjacent faces don't bleed into each other.
+        ctx.strokeStyle = `rgba(${(baseR+18)|0},${(baseG+18)|0},${(baseB+24)|0},0.55)`;
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
+
+        // Window lights on side faces.
+        if (fa.kind === 'side') {
+            const v0 = p[0], v1 = p[1], v2 = p[2], v3 = p[3];
+            // Approximate face area on screen to skip rendering windows
+            // on tiny far-away faces.
+            const screenW = Math.hypot(v1.sx - v0.sx, v1.sy - v0.sy);
+            const screenH = Math.hypot(v3.sx - v0.sx, v3.sy - v0.sy);
+            if (screenW < 8 || screenH < 12) continue;
+            const cols = Math.max(2, Math.min(6, Math.floor(screenW / 6)));
+            const rows = Math.max(2, Math.min(12, Math.floor(b.h / 35)));
+            const rngLocal = mulberry32((b.windowSeed + (fa.faceNormal[0] | 0) * 13 + (fa.faceNormal[2] | 0) * 29) | 0);
+            const t = clock.now;
+            for (let rr = 0; rr < rows; rr++) {
+                for (let cc = 0; cc < cols; cc++) {
+                    if (rngLocal() > b.litness) continue;
+                    const u = (cc + 0.5) / cols;
+                    const v = (rr + 0.5) / rows;
+                    // Bilinear interpolation of the four screen-space corners.
+                    const sx = (1 - u) * (1 - v) * v0.sx + u * (1 - v) * v1.sx + u * v * v2.sx + (1 - u) * v * v3.sx;
+                    const sy = (1 - u) * (1 - v) * v0.sy + u * (1 - v) * v1.sy + u * v * v2.sy + (1 - u) * v * v3.sy;
+                    // Faint flicker.
+                    const flicker = 0.62 + 0.38 * Math.sin(t * 1.3 + b.windowSeed + rr * 3 + cc);
+                    const alpha = flicker * 0.78;
+                    ctx.fillStyle = isLandmark
+                        ? `rgba(220, 230, 250, ${alpha})`
+                        : `rgba(255, 215, 140, ${alpha})`;
+                    ctx.fillRect(sx - 0.6, sy - 0.6, 1.4, 1.4);
+                }
+            }
+        }
+    }
+
+    // Landmark labels — render last so they sit on top.
+    for (const L of LANDMARKS) {
+        const ground = proj.project([L.pos[0], -50, L.pos[2]]);
+        if (!ground) continue;
+        ctx.fillStyle = 'rgba(232, 226, 208, 0.65)';
+        ctx.font = '700 8.5px ui-monospace, "SF Mono", Menlo, monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillText(a.id, g.sx, g.sy + half + 2);
+        ctx.fillText(L.id, ground.sx, ground.sy + 4);
         ctx.textAlign = 'start';
     }
 }
@@ -3730,6 +3926,11 @@ function frame(ts) {
     requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// Boot in AUTO mode — the system is the default operator. The chevron
+// on the Decisions panel collapses automatically; the operator can
+// click to expand and intervene.
+setAutoEngage(true);
 
 // ═════════════════════════════════════════════════════════════════════
 //   HARNESS — exposes clock control for automated visual verification.
