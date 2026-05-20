@@ -3159,8 +3159,14 @@ function drawSalvos() {
                 ctx.lineTo(b.sx, b.sy);
                 ctx.stroke();
             }
-        } else if (defScreen) {
-            // Pre-trail: render a thin connector from defender to head.
+        } else if (defScreen && s.state === 'inflight' && s.trail.length < 2) {
+            // Pre-trail connector for the very first frame after liftoff,
+            // when the trail buffer hasn't accumulated yet. We gate this
+            // tightly on inflight + small-trail because the same branch
+            // used to fire for orphaned salvos whose coast had expired —
+            // and there the "defender → head" line stretched all the
+            // way across the map from the launcher to wherever the
+            // missile had coasted to.
             ctx.strokeStyle = rgbStr(s.color, 0.55);
             ctx.lineWidth = 1.2;
             ctx.beginPath();
