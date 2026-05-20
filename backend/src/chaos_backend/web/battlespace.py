@@ -2883,11 +2883,56 @@ function tickSalvos(dt) {
     for (const s of engagement.salvos) {
         if (s.state === 'done') continue;
         if (clock.now < s.commitAt) continue;        // pre-commit hold
+
         const tr = findTrack(s.targetId);
-        if (!tr || engagement.killedTracks.has(s.targetId)) {
-            if (s.state === 'queued' || s.state === 'inflight') retireSalvo(s, 'abort');
+        const targetLost = (!tr || engagement.killedTracks.has(s.targetId));
+
+        if (targetLost && s.state === 'queued') {
+            // Never lifted off — silently scrap. Magazine was already
+            // consumed at queue time, so this is just cleanup.
+            retireSalvo(s, 'abort');
             continue;
         }
+
+        if (targetLost && s.state === 'inflight') {
+            // Real interceptors don't just vanish when their target
+            // is gone. Promote to 'orphaned' — they coast on their
+            // last velocity for orphanCoast seconds, then the safety
+            // fuze self-destructs them with a small mid-air flash.
+            s.state = 'orphaned';
+            s.orphanedAt = clock.now;
+        }
+
+        if (s.state === 'orphaned') {
+            // Coast on existing velocity, sample the trail, and trigger
+            // a self-destruct after a short window OR if the missile
+            // hits the deck.
+            const ORPHAN_COAST = 1.4;
+            s.position = V3.add(s.position, V3.scale(s.velocity, dt));
+            const samplePeriod = 1 / 30;
+            if (!s._lastSampled || (clock.now - s._lastSampled) >= samplePeriod) {
+                s.trail.push(s.position.slice());
+                if (s.trail.length > 48) s.trail.shift();
+                s._lastSampled = clock.now;
+            }
+            const expired = (clock.now - s.orphanedAt) > ORPHAN_COAST;
+            const grounded = s.position[1] < 20;
+            if (expired || grounded) {
+                engagement.splashes.push({
+                    point: s.position.slice(),
+                    born: clock.now,
+                    until: clock.now + 0.7,
+                    kind: 'selfdestruct',
+                });
+                pushLogOnce(
+                    `sd-${s.id}`,
+                    `interceptor abandoned <em>${s.defenderId}</em> · safety fuze self-destruct`,
+                );
+                retireSalvo(s, 'abort');
+            }
+            continue;
+        }
+
         const def = findDefender(s.defenderId);
 
         // ── Acquisition gate ──────────────────────────────────────
@@ -3125,6 +3170,26 @@ function drawSplashes() {
         const age = (clock.now - sp.born) / (sp.until - sp.born);
         if (age < 0 || age > 1) continue;
         const isLeak = sp.kind === 'leak';
+        const isSelfDestruct = sp.kind === 'selfdestruct';
+        if (isSelfDestruct) {
+            // Mid-air safety-fuze detonation — small white-blue flash,
+            // no shrapnel ticks, no shockwave. Just a brief puff.
+            const r = 6 + age * 16;
+            const flash = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, r);
+            flash.addColorStop(0.00, `rgba(220, 240, 255, ${(1 - age) * 0.85})`);
+            flash.addColorStop(0.55, `rgba(170, 200, 240, ${(1 - age) * 0.45})`);
+            flash.addColorStop(1.00, 'rgba(170, 200, 240, 0)');
+            ctx.fillStyle = flash;
+            ctx.beginPath();
+            ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = `rgba(220, 240, 255, ${(1 - age) * 0.6})`;
+            ctx.lineWidth = 0.7;
+            ctx.beginPath();
+            ctx.arc(p.sx, p.sy, r * 0.6, 0, Math.PI * 2);
+            ctx.stroke();
+            continue;
+        }
         // Leak splashes are bigger, crimson, longer-lived; intercept
         // splashes are smaller and amber.
         const r1 = (isLeak ? 14 : 8) + age * (isLeak ? 90 : 60);
