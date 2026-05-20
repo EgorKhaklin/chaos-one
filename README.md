@@ -256,19 +256,9 @@ chaos-one/
     tests/                   pytest suite (140+ tests)
     Makefile                 install / protos / lint / type / test / ci / bench / package / clean
     chaos-one.spec           PyInstaller spec for the launcher
-  unity/                     Unity 6 HDRP scaffold (deprecated front-end;
-                             retained because some HDRP-shader patterns
-                             informed the canvas pipeline)
   .github/workflows/         CI: ruff + mypy + pytest + CodeQL
   LICENSE                    Apache 2.0
 ```
-
-> **Note on Unity.** Earlier versions of Chaos One used Unity 6 HDRP
-> as the front end. The canvas-based browser renderer at
-> `/battlespace` superseded it — same architectural concepts (event
-> bus, audit chain, decision layers) but with deterministic math
-> that's self-testable in any browser. The Unity tree is kept as a
-> reference but is not the active surface.
 
 ---
 

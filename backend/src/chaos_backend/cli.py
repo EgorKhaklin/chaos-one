@@ -1,6 +1,6 @@
 """Command-line interface to the chaos-backend services.
 
-Lets the Python side be exercised end-to-end without Unity attached:
+Lets the Python side be exercised end-to-end from the terminal:
 
     chaos-backend-cli scenario peer_salvo --seed 42
     chaos-backend-cli classify --track-id TRK-001 --sample-count 1

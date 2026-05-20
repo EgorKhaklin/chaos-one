@@ -1,11 +1,8 @@
 """Hash-chained audit log primitives.
 
-Append-only JSONL with a SHA-256 Merkle chain over the entries. Designed
-as the Python-side companion to the Unity AuditLogWriter so the backend
-can produce its own engagement records that a future shared verifier
-could reconcile. Cross-platform hash compatibility is a milestone-6
-concern; for now each side writes and verifies its own logs with the
-same internal contract.
+Append-only JSONL with a SHA-256 Merkle chain over the entries. Each
+entry's hash is computed from the previous-hash + the entry payload,
+so any tampering after the fact is detectable by replaying the chain.
 """
 
 from chaos_backend.audit.diff import (

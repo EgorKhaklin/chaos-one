@@ -1,6 +1,6 @@
 """Battlespace visualization — a Canvas-rendered, self-contained scene.
 
-Geometry is computed in the browser with explicit 4×4 view/projection
+Geometry is computed in the browser with explicit 4x4 view/projection
 matrices: worldPos -> view * worldPos -> projection * viewPos, then
 homogeneous-divide and map normalized device coordinates to CSS pixels.
 Trails are interpolated with a Catmull-Rom spline so the rendered curve
@@ -8,7 +8,7 @@ is C¹-continuous regardless of the sampling rate, and every line stroke
 is pixel-snapped (0.5-offset) for crisp single-pixel lines on retina.
 
 The page is self-contained — no external assets — so iteration cycles
-don't depend on Unity rebuilds and the scene renders deterministically
+don't depend on a heavy build step and the scene renders deterministically
 in any browser. A small harness (`window.__chaos`) lets an automated
 browser pin the demo to a chosen frame for reproducible verification.
 """
@@ -19,7 +19,6 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
 from chaos_backend import __version__
-
 
 _BATTLESPACE_HTML = r"""<!doctype html>
 <html lang="en">

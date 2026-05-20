@@ -77,6 +77,12 @@ extend-exclude = ["src/chaos_backend/generated"]
 select = ["E", "F", "I", "B", "UP", "N", "RUF"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# battlespace.py embeds a large HTML/JS string literal whose
+# decorative typography (×, →, ·, °, ↑, ↓, …) is intentional —
+# RUF001 (ambiguous unicode) is noise here, not a finding.
+"src/chaos_backend/web/battlespace.py" = ["RUF001"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

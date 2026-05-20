@@ -1,6 +1,6 @@
 """Render an audit log to a self-contained HTML page.
 
-The output matches the Unity AuditReelView styling: deep navy canvas,
+The output matches the in-browser operator surfaces' styling: deep navy canvas,
 muted gold accents, monospace timestamps and event types, a banner at
 the top showing whether the chain verified. No external assets — the
 CSS is embedded so the file can be opened from disk or attached to an

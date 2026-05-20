@@ -1,50 +1,12 @@
 # ──────────────────────────────────────────────────────────────────
-# Unity
+# Build artifacts
 # ──────────────────────────────────────────────────────────────────
-unity/[Ll]ibrary/
-unity/[Tt]emp/
-unity/[Oo]bj/
-unity/[Bb]uild/
-unity/[Bb]uilds/
-unity/[Ll]ogs/
-unity/[Uu]ser[Ss]ettings/
-unity/[Mm]emoryCaptures/
-unity/[Rr]ecordings/
-unity/dist/
-unity/build.log
-unity/build.bootstrap.log
 dist/
 
-# Unity Asset meta files are tracked; .meta-orphans are not.
-unity/Assets/AssetStoreTools*
-
-# Burst
-unity/[Aa]ssets/[Aa]ssetStoreTools*
-unity/.consulo/
-unity/sysinfo.txt
-
-# Visual Studio / Rider IDE files
-*.csproj
-*.unityproj
-*.sln
-*.suo
-*.tmp
-*.user
-*.userprefs
-*.pidb
-*.booproj
-*.svd
-*.pdb
-*.mdb
-*.opendb
-*.VC.db
+# IDE
 .idea/
 .vs/
 .vscode/
-
-# Crash / autoreport
-sysinfo.txt
-crashlytics-build.properties
 
 # OS noise
 .DS_Store
@@ -54,6 +16,15 @@ crashlytics-build.properties
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Misc
+*.tmp
+*.user
+*.userprefs
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
 
 # ──────────────────────────────────────────────────────────────────
 # Python backend

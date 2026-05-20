@@ -2,7 +2,7 @@
 
 A small web surface that lets a reviewer pick a scenario, play it
 through the audit pipeline, and read the resulting hash-chained log
-in a browser without installing Unity or running the gRPC server.
+in a browser without running the gRPC server.
 
 Install with `pip install -e ".[web]"` (or `[dev]`) and run with
 `chaos-backend-cli web` or `uvicorn chaos_backend.web:app`.
