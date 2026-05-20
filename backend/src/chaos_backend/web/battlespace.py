@@ -2961,9 +2961,6 @@ function tickSalvos(dt) {
         if (s.kind === 'DIRECTED') {
             s.position = V3.lerp(s.position, targetPos, 0.5);
             if (clock.now - s.launchedAt >= s.directedDwell) {
-                // Roll Pk for directed-energy: high vs slow/low, low vs
-                // hardened HGV. Misses don't kill the track — they just
-                // expend dwell time. WTA will re-task on the miss.
                 const hit = Math.random() < (s.pk || 0.7);
                 s.impactPoint = targetPos;
                 s.impactAt = clock.now;
@@ -2971,6 +2968,7 @@ function tickSalvos(dt) {
                     retireSalvo(s, 'kill');
                     killTrack(tr.id, targetPos);
                 } else {
+                    // Beam never landed — pulse off and re-task.
                     pushLogOnce(`miss-${s.id}`, `miss <em>${s.defenderId}→${tr.id}</em> · re-task pending`);
                     retireSalvo(s, 'miss');
                 }
@@ -3016,13 +3014,14 @@ function tickSalvos(dt) {
         s.velocity = V3.scale(newDir, s.speed);
 
         // Live distance to the actual threat drives the proximity fuze.
+        // ONLY a confirmed hit retires the interceptor immediately. A
+        // fuze miss (Pk roll fails) flips the missile to 'orphaned' so
+        // it continues past the target and self-destructs visibly —
+        // operators never see a missile vanish without an impact.
         const liveDist = V3.len(V3.sub(targetPos, s.position));
         const stepLen = s.speed * dt;
         const fuzeR = Math.max(s.detonationM || 160, stepLen * 1.4);
         if (liveDist < fuzeR) {
-            // Roll Pk inside the lethal radius. If we miss, the missile
-            // continues for a beat then self-destructs (logged) so we
-            // don't claim ghost kills.
             const hit = Math.random() < (s.pk || 0.8);
             s.impactPoint = targetPos;
             s.impactAt = clock.now;
@@ -3031,7 +3030,12 @@ function tickSalvos(dt) {
                 killTrack(tr.id, targetPos);
             } else {
                 pushLogOnce(`miss-${s.id}`, `miss <em>${s.defenderId}→${tr.id}</em> · ${tr.kind} survived fuze`);
-                retireSalvo(s, 'miss');
+                // Promote to orphaned: missile flies past, the orphan
+                // coast logic at the top of the loop self-destructs it.
+                s.state = 'orphaned';
+                s.orphanedAt = clock.now;
+                // Tell the WTA the target is still alive so it re-tasks.
+                noteSalvoOutcome(s, 'miss');
             }
         } else {
             s.position = V3.add(s.position, V3.scale(s.velocity, dt));
@@ -3043,13 +3047,13 @@ function tickSalvos(dt) {
             }
         }
 
-        // Safety floor: leakage cleanup.
+        // Ground-floor: missile descended below 20 m without fuzing on
+        // the target. Don't claim a leakage on the THREAT (it's still
+        // alive) — just flip the missile to 'orphaned' and let the
+        // self-destruct splash fire from the same path as the miss case.
         if (s.position[1] < 20 && flightT > 0.8 && s.state === 'inflight') {
-            pushLogOnce(
-                `leak-${s.id}`,
-                `interceptor leakage <em>${s.defenderId}→${tr.id}</em> · ground impact`,
-            );
-            retireSalvo(s, 'leak');
+            s.state = 'orphaned';
+            s.orphanedAt = clock.now;
         }
     }
     // Garbage-collect old splashes
