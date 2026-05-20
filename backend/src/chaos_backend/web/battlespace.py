@@ -3038,7 +3038,7 @@ function tickSalvos(dt) {
             const samplePeriod = 1 / 30;
             if (!s._lastSampled || (clock.now - s._lastSampled) >= samplePeriod) {
                 s.trail.push(s.position.slice());
-                if (s.trail.length > 48) s.trail.shift();
+                if (s.trail.length > 24) s.trail.shift();   // ~0.8 s of trail history
                 s._lastSampled = clock.now;
             }
         }
@@ -3052,11 +3052,16 @@ function tickSalvos(dt) {
             s.orphanedAt = clock.now;
         }
     }
-    // Garbage-collect old splashes
-    const cutoff = clock.now - 1.2;
-    engagement.salvos = engagement.salvos.filter(s =>
-        s.state !== 'splash' || (s.impactAt && s.impactAt > cutoff)
-    );
+    // Garbage-collect retired salvos so the array stays bounded.
+    // 'done' salvos get dropped immediately (they're not rendered
+    // anyway); 'splash' salvos linger ~1.2 s so the impact effect
+    // can finish drawing.
+    const splashCutoff = clock.now - 1.2;
+    engagement.salvos = engagement.salvos.filter(s => {
+        if (s.state === 'done') return false;
+        if (s.state === 'splash') return s.impactAt && s.impactAt > splashCutoff;
+        return true;
+    });
     engagement.splashes = engagement.splashes.filter(sp => sp.until > clock.now);
 }
 
@@ -3161,21 +3166,27 @@ function drawSalvos() {
             ctx.lineTo(projP.sx, projP.sy);
             ctx.stroke();
         }
-        // Hot leading dot + halo — when orphaned, the head darkens
-        // alongside the trail so the missile visibly "burns out"
-        // before the self-destruct flash.
+        // Hot leading dot + halo. Both scale by camera depth so distant
+        // interceptors read as crisp point lights, not the cloud-shaped
+        // blobs they were when the radius was a fixed 14 px. When
+        // orphaned, the head darkens in step with the trail fade.
         const headBright = s.state === 'orphaned' ? trailFade : 1;
-        const halo = ctx.createRadialGradient(projP.sx, projP.sy, 0, projP.sx, projP.sy, 14);
-        halo.addColorStop(0.00, rgbStr(s.color, 0.95 * headBright));
-        halo.addColorStop(0.45, rgbStr(s.color, 0.40 * headBright));
+        // depth ranges from ~2 km (very close) to ~25 km+ (far). At 5 km
+        // we want a ~7 px halo, at 25 km we want a ~3 px halo. Clamp.
+        const depth = projP.depth || 10_000;
+        const haloR  = Math.max(2.6, Math.min(7.0, 12_000 / depth));
+        const coreR  = Math.max(0.9, Math.min(2.0,  6_000 / depth));
+        const halo = ctx.createRadialGradient(projP.sx, projP.sy, 0, projP.sx, projP.sy, haloR);
+        halo.addColorStop(0.00, rgbStr(s.color, 0.85 * headBright));
+        halo.addColorStop(0.50, rgbStr(s.color, 0.32 * headBright));
         halo.addColorStop(1.00, rgbStr(s.color, 0.00));
         ctx.fillStyle = halo;
         ctx.beginPath();
-        ctx.arc(projP.sx, projP.sy, 14, 0, Math.PI * 2);
+        ctx.arc(projP.sx, projP.sy, haloR, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = `rgba(255,255,255,${0.95 * headBright})`;
+        ctx.fillStyle = `rgba(255,255,255,${0.85 * headBright})`;
         ctx.beginPath();
-        ctx.arc(projP.sx, projP.sy, 2.4, 0, Math.PI * 2);
+        ctx.arc(projP.sx, projP.sy, coreR, 0, Math.PI * 2);
         ctx.fill();
     }
 }
