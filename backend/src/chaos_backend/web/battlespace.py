@@ -27,22 +27,42 @@ _BATTLESPACE_HTML = r"""<!doctype html>
     <title>Chaos One — Battlespace</title>
     <style>
         :root {
-            --gold:        #C9A961;
-            --gold-dim:    #8E7843;
-            --bone:        #E8E2D0;
-            --bone-dim:    rgba(232, 226, 208, 0.55);
-            --bone-dimmer: rgba(232, 226, 208, 0.30);
-            --bg-deep:     #04091A;
-            --bg-mid:      #0A1628;
-            --bg-panel:    rgba(10, 22, 40, 0.84);
-            --rule:        rgba(201, 169, 97, 0.32);
-            --amber:       #DC9A3C;
-            --crimson:     #DC5050;
-            --mint:        #96DCA0;
+            /* Gold spine — warmer at midtones, slightly cooler when dimmed. */
+            --gold:           #D0AE63;
+            --gold-bright:    #E6C277;
+            --gold-dim:       #8E7843;
+            --gold-faint:     rgba(208, 174, 99, 0.18);
+            --gold-rule:      rgba(208, 174, 99, 0.30);
+
+            /* Bone (off-white) for primary text. */
+            --bone:           #ECE6D5;
+            --bone-dim:       rgba(236, 230, 213, 0.62);
+            --bone-dimmer:    rgba(236, 230, 213, 0.34);
+            --bone-faint:     rgba(236, 230, 213, 0.08);
+
+            /* Background palette — deeper navy floor with slight blue lift. */
+            --bg-deep:        #03081A;
+            --bg-mid:         #091529;
+            --bg-elev:        rgba(13, 24, 42, 0.94);
+            --bg-panel:       rgba(11, 22, 40, 0.86);
+            --bg-panel-light: rgba(16, 30, 52, 0.86);
+
+            /* Status hues. */
+            --amber:          #E2A03E;
+            --amber-soft:     rgba(226, 160, 62, 0.20);
+            --crimson:        #E25656;
+            --crimson-soft:   rgba(226, 86, 86, 0.18);
+            --mint:           #A0E0AA;
+            --mint-soft:      rgba(160, 224, 170, 0.18);
+
+            /* Rules. */
+            --rule:           rgba(208, 174, 99, 0.32);
+            --rule-soft:      rgba(208, 174, 99, 0.18);
 
             /* Universal timings — fast snappy reveals, no slow tweens. */
-            --t-fast:      90ms cubic-bezier(0.22, 1, 0.36, 1);
-            --t-bar:       0ms linear;
+            --t-fast:         90ms cubic-bezier(0.22, 1, 0.36, 1);
+            --t-bar:          0ms linear;
+            --t-pulse:        2.4s ease-in-out infinite;
         }
         * { box-sizing: border-box; }
         html, body {
@@ -66,21 +86,34 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         /* ─── Mode HUD (top strip) ─── */
         .mode-hud {
             top: 0; left: 0; right: 0;
-            height: 38px;
+            height: 40px;
             display: flex; align-items: center;
             padding: 0 24px;
-            background: rgba(8, 18, 32, 0.94);
+            background: linear-gradient(180deg, rgba(8, 18, 32, 0.96) 0%, rgba(8, 18, 32, 0.86) 100%);
             border-bottom: 1px solid var(--rule);
             font-size: 11px;
             letter-spacing: 2.5px;
-            backdrop-filter: blur(6px);
+            font-variant-numeric: tabular-nums;
+            backdrop-filter: blur(8px) saturate(1.1);
+            -webkit-backdrop-filter: blur(8px) saturate(1.1);
         }
         .mode-hud__letter {
             color: var(--gold);
             font-weight: 800;
-            font-size: 16px;
-            width: 24px;
-            transition: color var(--t-fast);
+            font-size: 17px;
+            width: 28px;
+            text-align: center;
+            transition: color var(--t-fast), text-shadow var(--t-fast);
+            text-shadow: 0 0 12px rgba(208, 174, 99, 0.35);
+        }
+        .mode-hud--amber .mode-hud__letter {
+            color: var(--amber);
+            text-shadow: 0 0 14px rgba(226, 160, 62, 0.55);
+            animation: hud-pulse var(--t-pulse);
+        }
+        @keyframes hud-pulse {
+            0%, 100% { text-shadow: 0 0 14px rgba(226, 160, 62, 0.55); }
+            50%       { text-shadow: 0 0 20px rgba(226, 160, 62, 0.85); }
         }
         .mode-hud__name {
             color: var(--bone);
@@ -94,8 +127,8 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             margin-right: 18px;
         }
         .mode-hud__sep {
-            width: 1px; height: 14px;
-            background: var(--rule);
+            width: 1px; height: 16px;
+            background: linear-gradient(180deg, transparent 0%, var(--rule) 35%, var(--rule) 65%, transparent 100%);
             margin-right: 18px;
         }
         .mode-hud__mag {
@@ -107,29 +140,34 @@ _BATTLESPACE_HTML = r"""<!doctype html>
 
         /* ─── Classification banner ─── */
         .classbar {
-            top: 38px; left: 0; right: 0;
+            top: 40px; left: 0; right: 0;
             height: 18px;
             display: flex; align-items: center; justify-content: center;
-            color: rgba(150, 220, 160, 0.85);
-            background: rgba(8, 18, 30, 0.55);
+            color: rgba(160, 224, 170, 0.86);
+            background: rgba(7, 16, 28, 0.55);
             font-size: 9px;
-            letter-spacing: 4px;
+            letter-spacing: 4.5px;
             font-weight: 800;
-            border-bottom: 1px solid rgba(150, 220, 160, 0.18);
+            border-bottom: 1px solid rgba(160, 224, 170, 0.16);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
         }
 
         /* ─── Decisions Panel (right) ─── */
         .decisions {
             top: 70px; right: 24px;
             width: 360px;
-            padding: 16px 16px 14px;
-            background: var(--bg-panel);
-            border-left: 2px solid rgba(201, 169, 97, 0.65);
+            padding: 16px 18px 14px;
+            background: linear-gradient(180deg, var(--bg-panel-light) 0%, var(--bg-panel) 100%);
+            border-left: 2px solid rgba(208, 174, 99, 0.70);
             border-top: 1px solid var(--rule);
             border-right: 1px solid var(--rule);
             border-bottom: 1px solid var(--rule);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45),
+                        inset 0 1px 0 rgba(208, 174, 99, 0.08);
             pointer-events: auto;
-            backdrop-filter: blur(8px);
+            backdrop-filter: blur(10px) saturate(1.05);
+            -webkit-backdrop-filter: blur(10px) saturate(1.05);
         }
         .decisions__head {
             display: flex; align-items: center; justify-content: space-between;
@@ -159,8 +197,8 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         }
         .decisions__rule {
             height: 1px;
-            background: var(--rule);
-            margin-bottom: 12px;
+            background: linear-gradient(90deg, transparent 0%, var(--rule) 18%, var(--rule) 82%, transparent 100%);
+            margin-bottom: 14px;
         }
         /* When collapsed, hide the rule + body but keep the header. */
         .decisions--collapsed .decisions__rule,
@@ -214,13 +252,14 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             margin-left: 2px;
         }
         .coa {
-            padding: 12px;
+            padding: 13px 14px 12px;
             margin-bottom: 10px;
-            background: rgba(16, 28, 48, 0.92);
-            border-left: 2px solid rgba(201, 169, 97, 0.45);
-            border-top: 1px solid rgba(232, 226, 208, 0.08);
-            border-right: 1px solid rgba(232, 226, 208, 0.08);
-            border-bottom: 1px solid rgba(232, 226, 208, 0.08);
+            background: linear-gradient(180deg, rgba(18, 32, 54, 0.95) 0%, rgba(14, 26, 46, 0.92) 100%);
+            border-left: 2px solid rgba(208, 174, 99, 0.45);
+            border-top: 1px solid var(--bone-faint);
+            border-right: 1px solid var(--bone-faint);
+            border-bottom: 1px solid var(--bone-faint);
+            box-shadow: inset 0 1px 0 rgba(208, 174, 99, 0.06);
             opacity: 0;
             transform: translateY(2px);
             animation: coa-in 110ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
@@ -231,27 +270,30 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             to { opacity: 1; transform: translateY(0); }
         }
         .coa--rec {
-            border-left-color: var(--gold);
-            background: rgba(22, 34, 56, 0.96);
+            border-left-color: var(--gold-bright);
+            background: linear-gradient(180deg, rgba(28, 42, 66, 0.97) 0%, rgba(22, 34, 56, 0.94) 100%);
+            box-shadow: inset 0 1px 0 rgba(208, 174, 99, 0.12),
+                        0 0 0 1px rgba(208, 174, 99, 0.08);
         }
         .coa--authorized {
-            border-left-color: rgb(150, 220, 160);
-            background: rgba(16, 38, 30, 0.96);
+            border-left-color: var(--mint);
+            background: linear-gradient(180deg, rgba(20, 44, 36, 0.97) 0%, rgba(16, 36, 30, 0.92) 100%);
         }
         .coa__badge--ok {
-            background: rgb(150, 220, 160);
+            background: var(--mint);
             color: var(--bg-mid);
         }
         .coa__status {
             margin-top: 4px;
             padding: 8px 10px;
             text-align: center;
-            color: rgb(150, 220, 160);
-            background: rgba(150, 220, 160, 0.08);
-            border: 1px solid rgba(150, 220, 160, 0.32);
+            color: var(--mint);
+            background: var(--mint-soft);
+            border: 1px solid rgba(160, 224, 170, 0.36);
             font-size: 10px;
             font-weight: 800;
             letter-spacing: 2.5px;
+            animation: hud-pulse var(--t-pulse);
         }
         .coa__top {
             display: flex; align-items: center; justify-content: space-between;
@@ -295,12 +337,14 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         }
         .coa__bar {
             height: 3px;
-            background: rgba(232, 226, 208, 0.10);
+            background: rgba(236, 230, 213, 0.10);
             margin-bottom: 9px;
+            overflow: hidden;
+            border-radius: 1px;
         }
         .coa__bar-fill {
             height: 100%;
-            background: var(--gold);
+            background: linear-gradient(90deg, var(--gold) 0%, var(--gold-bright) 100%);
             transition: width var(--t-bar);
             will-change: width;
         }
@@ -368,13 +412,16 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         .adv {
             bottom: 64px; left: 24px;
             width: 360px;
-            padding: 14px 16px;
-            background: var(--bg-panel);
-            border-left: 2px solid rgba(201, 169, 97, 0.55);
+            padding: 14px 18px;
+            background: linear-gradient(180deg, var(--bg-panel-light) 0%, var(--bg-panel) 100%);
+            border-left: 2px solid rgba(208, 174, 99, 0.55);
             border-top: 1px solid var(--rule);
             border-right: 1px solid var(--rule);
             border-bottom: 1px solid var(--rule);
-            backdrop-filter: blur(8px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45),
+                        inset 0 1px 0 rgba(208, 174, 99, 0.08);
+            backdrop-filter: blur(10px) saturate(1.05);
+            -webkit-backdrop-filter: blur(10px) saturate(1.05);
         }
         .adv__title {
             color: var(--gold);
@@ -383,12 +430,16 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             font-weight: 800;
             margin-bottom: 8px;
         }
-        .adv__rule { height: 1px; background: var(--rule); margin-bottom: 12px; }
+        .adv__rule {
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, var(--rule) 18%, var(--rule) 82%, transparent 100%);
+            margin-bottom: 14px;
+        }
         .hyp {
             display: grid;
             grid-template-columns: 40px 1fr 20px 64px;
             align-items: center;
-            margin-bottom: 7px;
+            margin-bottom: 8px;
             font-size: 10px;
             letter-spacing: 0.5px;
         }
@@ -399,35 +450,38 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             font-variant-numeric: tabular-nums;
         }
         .hyp__n {
-            color: rgba(232, 226, 208, 0.82);
+            color: var(--bone-dim);
             margin-left: 4px;
         }
         .hyp__d {
-            color: rgba(201, 169, 97, 0.85);
+            color: rgba(208, 174, 99, 0.88);
             text-align: center;
             font-size: 12px;
         }
         .hyp__bar {
             height: 4px;
-            background: rgba(232, 226, 208, 0.10);
+            background: rgba(236, 230, 213, 0.10);
+            border-radius: 1px;
+            overflow: hidden;
         }
         .hyp__bar-fill {
             height: 100%;
-            background: var(--gold);
+            background: linear-gradient(90deg, var(--gold) 0%, var(--gold-bright) 100%);
             transition: width 110ms cubic-bezier(0.22, 1, 0.36, 1);
             will-change: width;
         }
         .cost {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid rgba(201, 169, 97, 0.22);
+            margin-top: 12px;
+            padding-top: 11px;
+            border-top: 1px solid var(--rule-soft);
         }
         .cost__lbl {
-            color: rgba(232, 226, 208, 0.78);
+            color: var(--bone-dim);
             font-size: 9.5px;
             letter-spacing: 2px;
             font-weight: 700;
             margin-bottom: 6px;
+            font-variant-numeric: tabular-nums;
         }
         .cost__spark {
             display: flex; align-items: flex-end; gap: 2px;
@@ -435,8 +489,9 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         }
         .cost__spark > div {
             flex: 1;
-            background: rgba(201, 169, 97, 0.65);
+            background: linear-gradient(180deg, var(--gold-bright) 0%, rgba(208, 174, 99, 0.45) 100%);
             min-width: 2px;
+            border-radius: 1px 1px 0 0;
             transition: height var(--t-fast);
         }
 
@@ -446,12 +501,13 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             height: 32px;
             display: flex; align-items: center;
             padding: 0 24px;
-            background: rgba(8, 18, 32, 0.94);
+            background: linear-gradient(180deg, rgba(7, 16, 28, 0.94) 0%, rgba(7, 16, 28, 0.96) 100%);
             border-top: 1px solid var(--rule);
             font-size: 10px;
             letter-spacing: 0.5px;
             overflow: hidden;
-            backdrop-filter: blur(6px);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
         }
         .calm__label {
             color: var(--gold);
@@ -489,25 +545,26 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             letter-spacing: 1px;
             color: var(--bone);
             transform-origin: left center;
-            background: rgba(10, 22, 40, 0.78);
-            border: 1px solid rgba(201, 169, 97, 0.45);
+            background: rgba(8, 18, 32, 0.82);
+            border: 1px solid rgba(208, 174, 99, 0.42);
             border-left-width: 2px;
-            padding: 4px 8px 4px 8px;
+            padding: 4px 9px 4px 9px;
             font-variant-numeric: tabular-nums;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
             transition: left var(--t-fast), top var(--t-fast), opacity var(--t-fast);
             will-change: left, top, transform;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
         }
         .callout--far {
-            /* When the threat is far, drop the full readout and show
-               just the id chip so the picture doesn't get clobbered
-               by stacked labels. */
             font-size: 8.5px;
-            padding: 2px 5px;
-            opacity: 0.78;
+            padding: 2px 6px;
+            opacity: 0.82;
+            box-shadow: none;
         }
         .callout--far .callout__data { display: none; }
         .callout__id {
-            color: var(--gold);
+            color: var(--gold-bright);
             font-weight: 800;
             letter-spacing: 1.5px;
             font-size: 9.5px;
@@ -519,18 +576,21 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         .stats {
             bottom: 110px; right: 24px;
             width: 280px;
-            padding: 12px 14px;
-            background: var(--bg-panel);
-            border-left: 2px solid rgba(150, 220, 160, 0.55);
+            padding: 13px 16px;
+            background: linear-gradient(180deg, var(--bg-panel-light) 0%, var(--bg-panel) 100%);
+            border-left: 2px solid rgba(160, 224, 170, 0.55);
             border-top: 1px solid var(--rule);
             border-right: 1px solid var(--rule);
             border-bottom: 1px solid var(--rule);
             font-size: 10px;
             letter-spacing: 1px;
-            backdrop-filter: blur(8px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45),
+                        inset 0 1px 0 rgba(160, 224, 170, 0.08);
+            backdrop-filter: blur(10px) saturate(1.05);
+            -webkit-backdrop-filter: blur(10px) saturate(1.05);
         }
         .stats__title {
-            color: rgb(150, 220, 160);
+            color: var(--mint);
             font-size: 10px;
             letter-spacing: 4px;
             font-weight: 800;
@@ -538,8 +598,8 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         }
         .stats__rule {
             height: 1px;
-            background: rgba(150, 220, 160, 0.30);
-            margin-bottom: 10px;
+            background: linear-gradient(90deg, transparent 0%, rgba(160, 224, 170, 0.34) 18%, rgba(160, 224, 170, 0.34) 82%, transparent 100%);
+            margin-bottom: 12px;
         }
         .stats__row {
             display: grid;
@@ -548,7 +608,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             font-variant-numeric: tabular-nums;
         }
         .stats__k {
-            color: rgba(232, 226, 208, 0.55);
+            color: var(--bone-dim);
             font-weight: 700;
             letter-spacing: 1.5px;
         }
@@ -559,28 +619,35 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             letter-spacing: 0.5px;
             transition: color var(--t-fast);
         }
-        .stats__v--ok   { color: rgb(150, 220, 160); }
-        .stats__v--warn { color: rgb(220, 160, 60); }
+        .stats__v--ok   { color: var(--mint); }
+        .stats__v--warn { color: var(--amber); }
 
         /* ─── Weapons bay (above calm channel) ─── */
         .bay {
             bottom: 32px; left: 50%;
             transform: translateX(-50%);
-            display: flex; gap: 10px;
-            padding: 8px 14px;
-            background: rgba(8, 18, 32, 0.86);
+            display: flex; gap: 12px;
+            padding: 9px 16px;
+            background: linear-gradient(180deg, rgba(7, 16, 28, 0.88) 0%, rgba(7, 16, 28, 0.96) 100%);
             border-top: 1px solid var(--rule);
             border-left: 1px solid var(--rule);
             border-right: 1px solid var(--rule);
-            backdrop-filter: blur(6px);
+            box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.4),
+                        inset 0 1px 0 rgba(208, 174, 99, 0.08);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
         }
         .bay__slot {
-            min-width: 96px;
-            padding: 4px 8px 6px;
+            min-width: 100px;
+            padding: 4px 10px 6px;
             border-left: 2px solid var(--bone-dimmer);
+            transition: border-left-color var(--t-fast);
         }
-        .bay__slot--depleted { border-left-color: rgba(220, 80, 80, 0.65); }
-        .bay__slot--firing   { border-left-color: var(--amber); }
+        .bay__slot--depleted { border-left-color: rgba(226, 86, 86, 0.7); }
+        .bay__slot--firing {
+            border-left-color: var(--amber);
+            animation: hud-pulse var(--t-pulse);
+        }
         .bay__row {
             display: flex; justify-content: space-between; align-items: baseline;
             font-size: 9px;
@@ -594,34 +661,52 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         .bay__count {
             color: var(--bone);
             font-weight: 800;
-            font-size: 12px;
+            font-size: 13px;
             transition: color var(--t-fast);
         }
         .bay__bar {
             height: 3px;
-            margin-top: 4px;
-            background: rgba(232, 226, 208, 0.10);
+            margin-top: 5px;
+            background: rgba(236, 230, 213, 0.10);
+            border-radius: 1px;
+            overflow: hidden;
         }
         .bay__bar-fill {
             height: 100%;
-            background: var(--gold);
+            background: linear-gradient(90deg, var(--gold) 0%, var(--gold-bright) 100%);
             transition: width var(--t-fast);
         }
 
         /* ─── Watermark ─── */
         .wm {
             bottom: 44px; right: 320px;
-            color: rgba(201, 169, 97, 0.32);
+            color: rgba(208, 174, 99, 0.34);
             font-size: 9px;
-            letter-spacing: 4px;
+            letter-spacing: 4.5px;
             font-weight: 700;
             text-align: right;
+            font-variant-numeric: tabular-nums;
         }
         .wm__big {
-            color: rgba(201, 169, 97, 0.45);
+            color: rgba(208, 174, 99, 0.48);
             font-size: 11px;
             letter-spacing: 6px;
             margin-bottom: 2px;
+        }
+
+        /* ─── Cinematic vignette ─── */
+        /* Subtle darkening at the edges + a tiny chromatic shift in
+           the corners so the picture has a lens-like quality rather
+           than a flat web-page rectangle. */
+        .vignette {
+            inset: 0;
+            z-index: 50;
+            pointer-events: none;
+            background:
+                radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%),
+                radial-gradient(circle at 0% 0%,   rgba(208, 174, 99, 0.05), transparent 35%),
+                radial-gradient(circle at 100% 100%, rgba(20, 40, 70, 0.18), transparent 40%);
+            mix-blend-mode: multiply;
         }
     </style>
 </head>
@@ -721,8 +806,10 @@ _BATTLESPACE_HTML = r"""<!doctype html>
     <div class="overlay wm">
         <div class="wm__big">CHAOS ONE</div>
         <div>BATTLESPACE · v__VERSION__</div>
-        <div id="camBadge" style="margin-top:4px;color:rgba(150,220,160,0.55);"></div>
+        <div id="camBadge" style="margin-top:4px;color:rgba(160,224,170,0.55);"></div>
     </div>
+
+    <div class="overlay vignette" aria-hidden="true"></div>
 
 <script>
 (() => {
@@ -2213,37 +2300,57 @@ function drawDefenderBatteries() {
 
         for (const { idx, lambert } of shaded) {
             const p0 = PRJ[idx[0]], p1 = PRJ[idx[1]], p2 = PRJ[idx[2]];
-            // Build a shaded fill from the battery's accent colour
-            // blended with a dark navy underlay.
-            const r = Math.min(255, 14 + b.color[0] * 200 * lambert);
-            const g = Math.min(255, 22 + b.color[1] * 200 * lambert);
-            const bb = Math.min(255, 36 + b.color[2] * 220 * lambert);
-            ctx.fillStyle = `rgba(${r|0},${g|0},${bb|0},0.97)`;
+            // Per-face gradient: brighter at the apex (top) → cooler at
+            // the base. Lambertian shade modulates the brightness.
+            const apex2D = PRJ[idx[0]];
+            const baseMidX = (PRJ[idx[1]].sx + PRJ[idx[2]].sx) * 0.5;
+            const baseMidY = (PRJ[idx[1]].sy + PRJ[idx[2]].sy) * 0.5;
+            const grad = ctx.createLinearGradient(apex2D.sx, apex2D.sy, baseMidX, baseMidY);
+            const hi = lambert;
+            const lo = lambert * 0.55;
+            grad.addColorStop(0.00, `rgba(${(18 + b.color[0]*210*hi)|0},${(28 + b.color[1]*210*hi)|0},${(42 + b.color[2]*230*hi)|0},0.97)`);
+            grad.addColorStop(1.00, `rgba(${(10 + b.color[0]*150*lo)|0},${(18 + b.color[1]*150*lo)|0},${(30 + b.color[2]*180*lo)|0},0.97)`);
+            ctx.fillStyle = grad;
             ctx.beginPath();
             ctx.moveTo(p0.sx, p0.sy);
             ctx.lineTo(p1.sx, p1.sy);
             ctx.lineTo(p2.sx, p2.sy);
             ctx.closePath();
             ctx.fill();
-            // Edge highlight — brighter on faces nearest the sun.
-            ctx.strokeStyle = rgbStr(b.color, 0.45 + 0.45 * lambert);
-            ctx.lineWidth = 1.0;
+            // Edge highlight: brighter on sun-lit faces, slightly thicker.
+            ctx.strokeStyle = rgbStr(b.color, 0.50 + 0.40 * lambert);
+            ctx.lineWidth = 1.1;
+            ctx.lineJoin = 'round';
             ctx.stroke();
         }
 
-        // Apex emissive bead + halo.
+        // Base shadow — a soft ground-plane ellipse beneath the pyramid.
+        const baseShadow = proj.project([cx, 2, cz]);
+        if (baseShadow) {
+            const sR = Math.max(8, 90 / Math.max(0.6, baseShadow.depth / 7000));
+            const sg = ctx.createRadialGradient(baseShadow.sx, baseShadow.sy, 0, baseShadow.sx, baseShadow.sy, sR);
+            sg.addColorStop(0, 'rgba(0,0,0,0.45)');
+            sg.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = sg;
+            ctx.beginPath();
+            ctx.ellipse(baseShadow.sx, baseShadow.sy + 2, sR, sR * 0.45, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Apex emissive bead + halo — softer, more cinematic.
         const apex = PRJ[0];
-        const haloR = 22;
+        const haloR = 24;
         const halo = ctx.createRadialGradient(apex.sx, apex.sy, 0, apex.sx, apex.sy, haloR);
-        halo.addColorStop(0, rgbStr(b.color, 0.55));
-        halo.addColorStop(1, rgbStr(b.color, 0.00));
+        halo.addColorStop(0.00, rgbStr(b.color, 0.62));
+        halo.addColorStop(0.55, rgbStr(b.color, 0.20));
+        halo.addColorStop(1.00, rgbStr(b.color, 0.00));
         ctx.fillStyle = halo;
         ctx.beginPath();
         ctx.arc(apex.sx, apex.sy, haloR, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = rgbStr(b.color, 1.0);
         ctx.beginPath();
-        ctx.arc(apex.sx, apex.sy, 2.6, 0, Math.PI * 2);
+        ctx.arc(apex.sx, apex.sy, 2.4, 0, Math.PI * 2);
         ctx.fill();
 
         // Label below the base.
@@ -3642,8 +3749,9 @@ function renderHUD(t) {
     const hud = document.getElementById('modeHud');
     if (ltr.textContent !== m.letter) ltr.textContent = m.letter;
     if (nm.textContent !== m.name) nm.textContent = m.name;
-    hud.style.borderBottomColor = m.color === 'amber' ? 'rgba(220, 160, 60, 0.85)' : 'var(--rule)';
-    ltr.style.color = m.color === 'amber' ? '#DC9A3C' : 'var(--gold)';
+    const amber = m.color === 'amber';
+    hud.classList.toggle('mode-hud--amber', amber);
+    hud.style.borderBottomColor = amber ? 'rgba(226, 160, 62, 0.85)' : 'var(--rule)';
 }
 
 function renderDecisions(t) {
