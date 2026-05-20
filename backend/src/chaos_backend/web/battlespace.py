@@ -1077,26 +1077,31 @@ const ASSETS = [
 //   physics layer doesn't care which class it is — only the priors
 //   that feed weapon-target assignment.
 // ═════════════════════════════════════════════════════════════════════
+// Spawn radii pushed PAST the 18-42 km mountain ring so threats
+// emerge over the terrain instead of popping into existence at the
+// inner edge of the map. Flight times scaled so the threat still
+// completes its trajectory in 9-16 s — the displayed Mach numbers
+// are an operational shorthand, not the literal traversal speed.
 const THREAT_CLASSES = {
     HGV:    { color: [1.00, 0.66, 0.38], machBase: 9.0,
-              apogeeRange:[6_500, 9_500], flightTimeRange: [7.0, 10.5],
-              spawnRange: [11_000, 14_000], terminalRange: [400, 1_400],
+              apogeeRange:[7_500, 11_000], flightTimeRange: [10.0, 14.0],
+              spawnRange: [46_000, 62_000], terminalRange: [400, 1_400],
               priority: 1 },
     BM:     { color: [0.95, 0.55, 0.55], machBase: 7.5,
-              apogeeRange:[8_000, 13_000], flightTimeRange: [8.5, 12.0],
-              spawnRange: [11_500, 14_500], terminalRange: [200, 900],
+              apogeeRange:[10_000, 16_000], flightTimeRange: [11.0, 15.0],
+              spawnRange: [48_000, 65_000], terminalRange: [200, 900],
               priority: 1 },
     MARV:   { color: [0.95, 0.84, 0.55], machBase: 6.8,
-              apogeeRange:[4_000, 6_500], flightTimeRange: [6.5, 9.0],
-              spawnRange: [10_000, 13_000], terminalRange: [200, 800],
+              apogeeRange:[5_000, 8_000], flightTimeRange: [9.0, 12.5],
+              spawnRange: [36_000, 50_000], terminalRange: [200, 800],
               priority: 2 },
     CRUISE: { color: [0.85, 0.60, 0.30], machBase: 0.85,
-              apogeeRange:[ 250,   500], flightTimeRange: [10.0, 14.0],
-              spawnRange: [10_000, 13_500], terminalRange: [150, 600],
+              apogeeRange:[ 280,   650], flightTimeRange: [12.0, 16.0],
+              spawnRange: [28_000, 42_000], terminalRange: [150, 600],
               priority: 3 },
     DRONE:  { color: [0.78, 0.55, 0.85], machBase: 0.30,
-              apogeeRange:[ 180,   320], flightTimeRange: [11.0, 16.0],
-              spawnRange: [ 8_500, 12_500], terminalRange: [120, 500],
+              apogeeRange:[ 200,   380], flightTimeRange: [12.0, 17.0],
+              spawnRange: [22_000, 36_000], terminalRange: [120, 500],
               priority: 4 },
 };
 
