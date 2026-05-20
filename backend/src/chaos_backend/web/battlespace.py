@@ -833,7 +833,7 @@ class Camera {
         this.height    = 6_000;
         this.lookAtY   = 1_400;
         this.angle     = -2.05;
-        this.angleRate = 0.018;
+        this.angleRate = 0;            // auto-orbit off by default; operator drives
         this.fovDeg    = 40;
         // Bounds (operator can't dive into the floor or fly to the moon).
         this.minRadius = 2_500;
@@ -883,6 +883,7 @@ class Camera {
         this.height    = 6_000;
         this.lookAtY   = 1_400;
         this.angle     = -2.05;
+        this.angleRate = 0;
         this.interacted = clock.now;
     }
     toggleFreeCam() {
@@ -976,7 +977,7 @@ const DEFENDER_BATTERIES = [
                     boost_s: 0.45, turn_rad_s: 3.2, detonation_m: 220 },
         logistics:{ magazine: 24, magazineMax: 24, reload_s: 0.7, maxSimul: 4,
                     resupply_s: 6.0 /* one round trickles in every 6 s */ },
-        pk:       { HGV: 0.93, BM: 0.96, MARV: 0.88, CRUISE: 0.42, DRONE: 0.55 },
+        pk:       { HGV: 0.93, BM: 0.96, MARV: 0.88, CRUISE: 0.42, DRONE: 0.55, HYP: 0.58 },
     },
     {
         id: 'SM-3', pos: hexPosition( 90, DEFENDER_RADIUS_M),
@@ -986,7 +987,7 @@ const DEFENDER_BATTERIES = [
                     boost_s: 0.42, turn_rad_s: 3.0, detonation_m: 200 },
         logistics:{ magazine: 32, magazineMax: 32, reload_s: 0.6, maxSimul: 6,
                     resupply_s: 4.5 },
-        pk:       { HGV: 0.82, BM: 0.90, MARV: 0.90, CRUISE: 0.65, DRONE: 0.78 },
+        pk:       { HGV: 0.82, BM: 0.90, MARV: 0.90, CRUISE: 0.65, DRONE: 0.78, HYP: 0.32 },
     },
     {
         id: 'PAC-3', pos: hexPosition(180, DEFENDER_RADIUS_M),
@@ -996,7 +997,7 @@ const DEFENDER_BATTERIES = [
                     boost_s: 0.40, turn_rad_s: 4.5, detonation_m: 160 },
         logistics:{ magazine: 48, magazineMax: 48, reload_s: 0.45, maxSimul: 8,
                     resupply_s: 3.0 },
-        pk:       { HGV: 0.40, BM: 0.55, MARV: 0.85, CRUISE: 0.90, DRONE: 0.92 },
+        pk:       { HGV: 0.40, BM: 0.55, MARV: 0.85, CRUISE: 0.90, DRONE: 0.92, HYP: 0.06 },
     },
     {
         id: 'HEL',  pos: hexPosition(270, DEFENDER_RADIUS_M),
@@ -1007,7 +1008,7 @@ const DEFENDER_BATTERIES = [
                     dwell_s: 0.45 /* dwell-to-kill, line-of-sight */ },
         logistics:{ magazine: 999, magazineMax: 999, reload_s: 0.15, maxSimul: 2,
                     resupply_s: 0 /* directed energy doesn't run out */ },
-        pk:       { HGV: 0.30, BM: 0.35, MARV: 0.55, CRUISE: 0.92, DRONE: 0.98 },
+        pk:       { HGV: 0.30, BM: 0.35, MARV: 0.55, CRUISE: 0.92, DRONE: 0.98, HYP: 0.10 },
     },
 ];
 
@@ -1203,6 +1204,16 @@ const THREAT_CLASSES = {
               apogeeRange:[ 200,   380], flightTimeRange: [12.0, 17.0],
               spawnRange: [22_000, 36_000], terminalRange: [120, 500],
               priority: 4 },
+    // HYP — advanced hypersonic glide vehicle. Top-priority hard
+    // target: Mach 14+, very high apogee, fast descent, brightly
+    // coloured so the operator immediately sees the threat picture
+    // change. Defender Pk against HYP is intentionally lower for
+    // anything but NGI — the operator should observe NGI carrying
+    // the engagement while the other batteries struggle.
+    HYP:    { color: [1.00, 0.42, 0.95], machBase: 14.0,
+              apogeeRange:[16_000, 24_000], flightTimeRange: [8.0, 10.5],
+              spawnRange: [70_000, 92_000], terminalRange: [300, 1_200],
+              priority: 1 },
 };
 
 // PRNG with sessionable seed so different page-loads see different
@@ -1214,7 +1225,8 @@ function reseedWaves(seed) { WAVE_SEED = seed; waveRng = mulberry32(seed); }
 let threatSerial = 0;
 function newThreatId(kind) {
     threatSerial++;
-    const tag = { HGV: 'WRAITH', BM: 'TALON', MARV: 'VIPER', CRUISE: 'SCYTHE', DRONE: 'SHAHED' }[kind];
+    const tag = { HGV: 'WRAITH', BM: 'TALON', MARV: 'VIPER', CRUISE: 'SCYTHE',
+                  DRONE: 'SHAHED', HYP: 'AVANGARD' }[kind] || 'UNKNOWN';
     return `${kind}-${tag}-${String(threatSerial).padStart(2, '0')}`;
 }
 
@@ -1433,6 +1445,16 @@ const DRIZZLE = {
     ],
 };
 
+// HYPERSONIC ALERT — rare event that fires a small burst of HYP
+// threats from deep beyond the mountain ring. Forces the WTA to
+// reassign NGI to the high-priority target while the other
+// batteries fall back to mopping up the surrounding wave.
+const HYPERSONIC = {
+    nextAt: 22 + Math.random() * 18,      // first event ~25-40 s after load
+    interval: [38, 68],
+    burst: [1, 2],
+};
+
 function pickFromTable(table, rng) {
     const r = rng();
     let acc = 0;
@@ -1470,6 +1492,20 @@ function tickWaves() {
         const t = clock.now + 0.25;
         THREATS.push(makeRandomThreat(kind, t, waveRng));
         DRIZZLE.nextAt = clock.now + DRIZZLE.interval[0] + waveRng() * (DRIZZLE.interval[1] - DRIZZLE.interval[0]);
+    }
+    if (clock.now >= HYPERSONIC.nextAt) {
+        const count = (HYPERSONIC.burst[0] | 0) + Math.floor(waveRng() * (HYPERSONIC.burst[1] - HYPERSONIC.burst[0] + 1));
+        let stagger = 0;
+        for (let i = 0; i < count; i++) {
+            const t = clock.now + 0.20 + stagger + waveRng() * 0.25;
+            THREATS.push(makeRandomThreat('HYP', t, waveRng));
+            stagger += 0.45;
+        }
+        HYPERSONIC.nextAt = clock.now + HYPERSONIC.interval[0] + waveRng() * (HYPERSONIC.interval[1] - HYPERSONIC.interval[0]);
+        pushLogOnce(
+            `hyp-${clock.now.toFixed(2)}`,
+            `<em>HYPERSONIC ALERT</em> · ${count} HGV-S contact${count > 1 ? 's' : ''} · Mach 14+ · NGI primary`,
+        );
     }
 }
 
@@ -3893,7 +3929,6 @@ function frame(ts) {
 
     // Draw — back to front
     drawSky();
-    drawStars();
     drawMountainRing();      // 3D peaks in world space (behind everything else)
     drawHorizonLine();        // thin gold seam under the sky
     drawCityLightField();     // world-space ground pinpricks
@@ -3937,11 +3972,24 @@ setAutoEngage(true);
 // ═════════════════════════════════════════════════════════════════════
 window.__chaos = {
     freezeAt: (sec) => { clock.freeze(sec); cam.angleRate = 0; },
-    unfreeze: () => { clock.unfreeze(); cam.angleRate = 0.018; },
+    unfreeze: () => { clock.unfreeze(); /* leave camera under operator control */ },
     setCameraAngle: (rad) => { cam.angle = rad; cam.angleRate = 0; },
     clock: () => clock.now,
     setAuto:  (on) => setAutoEngage(on),
     stress:   () => spawnStressWave(),
+    hypersonic: (n) => {
+        // Manually fire the HYP alert spawner.
+        const count = n || 2;
+        let stagger = 0;
+        for (let i = 0; i < count; i++) {
+            THREATS.push(makeRandomThreat('HYP', clock.now + 0.25 + stagger, waveRng));
+            stagger += 0.45;
+        }
+        pushLogOnce(
+            `hyp-manual-${clock.now.toFixed(2)}`,
+            `<em>HYPERSONIC ALERT</em> · ${count} HGV-S contact${count > 1 ? 's' : ''} · Mach 14+ · NGI primary`,
+        );
+    },
     seed:     (n) => reseedWaves(n),
     snapshot: () => ({
         clock: clock.now,
