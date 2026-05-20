@@ -3405,40 +3405,54 @@ function drawTracks() {
         const p = trackPos(tr);
         const sp = proj.project(p);
         if (!sp) continue;
-        const r = Math.max(2.5, 220 / Math.max(0.5, sp.depth / 800));
+        // Depth-scaled glow + bracket halo. Closer threats look larger.
+        const r = Math.max(2.5, 200 / Math.max(0.5, sp.depth / 800));
 
+        // Outer halo — softer 3-stop gradient.
         const halo = ctx.createRadialGradient(sp.sx, sp.sy, 0, sp.sx, sp.sy, r * 4);
-        halo.addColorStop(0.00, rgbStr(tr.color, 0.95));
-        halo.addColorStop(0.35, rgbStr(tr.color, 0.42));
+        halo.addColorStop(0.00, rgbStr(tr.color, 0.85));
+        halo.addColorStop(0.30, rgbStr(tr.color, 0.42));
+        halo.addColorStop(0.70, rgbStr(tr.color, 0.12));
         halo.addColorStop(1.00, rgbStr(tr.color, 0.00));
         ctx.fillStyle = halo;
         ctx.beginPath();
         ctx.arc(sp.sx, sp.sy, r * 4, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
+        // Inner core — bright tint of the threat colour (no white).
+        const coreColor = [
+            Math.min(1, tr.color[0] * 1.3 + 0.10),
+            Math.min(1, tr.color[1] * 1.3 + 0.10),
+            Math.min(1, tr.color[2] * 1.3 + 0.10),
+        ];
+        ctx.fillStyle = rgbStr(coreColor, 0.95);
         ctx.beginPath();
         ctx.arc(sp.sx, sp.sy, r * 0.55, 0, Math.PI * 2);
         ctx.fill();
 
-        // Corner-bracket "track locked" frame replaces the closed ring.
+        // Corner-bracket "track locked" frame — thicker line for HVTs.
         const bracketHalf = Math.max(10, r * 2.1);
         const bracketLen  = Math.max(4, bracketHalf * 0.30);
-        drawCornerBrackets(sp.sx, sp.sy, bracketHalf, bracketLen, rgbStr(tr.color, 0.95), 1.2);
+        const bracketW    = tr.priority <= 2 ? 1.5 : 1.2;
+        drawCornerBrackets(sp.sx, sp.sy, bracketHalf, bracketLen,
+                           rgbStr(tr.color, 0.95), bracketW);
 
-        // Priority badge
-        ctx.fillStyle = 'rgba(10, 22, 40, 0.78)';
-        ctx.strokeStyle = rgbStr(tr.color, 0.90);
+        // Priority badge — small inset square in the top-left corner.
+        const bx = sp.sx - bracketHalf - 5;
+        const by = sp.sy - bracketHalf - 5;
+        const bSize = 11;
+        ctx.fillStyle = 'rgba(8, 18, 32, 0.86)';
+        ctx.strokeStyle = rgbStr(tr.color, 0.92);
         ctx.lineWidth = 1.0;
         ctx.beginPath();
-        ctx.arc(sp.sx - bracketHalf - 4, sp.sy - bracketHalf - 4, 8, 0, Math.PI * 2);
+        ctx.rect(bx - bSize / 2, by - bSize / 2, bSize, bSize);
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = rgbStr(tr.color, 0.95);
+        ctx.fillStyle = rgbStr(tr.color, 0.98);
         ctx.font = '800 9px ui-monospace, "SF Mono", Menlo, monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(tr.priority), sp.sx - bracketHalf - 4, sp.sy - bracketHalf - 4);
+        ctx.fillText(String(tr.priority), bx, by);
         ctx.textAlign = 'start';
     }
 }
@@ -3450,39 +3464,52 @@ function drawRadarSweep() {
     const cx = 120;
     const cy = 200;
     const R  = 64;
-    // outer circle + inner range steps
-    ctx.strokeStyle = 'rgba(150, 220, 160, 0.32)';
-    ctx.lineWidth = 1.0;
+    // Filled CRT-style background — soft radial glow centred on the
+    // origin, so the scope reads as an instrument face rather than a
+    // hollow circle sitting on the canvas.
+    const scopeBg = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+    scopeBg.addColorStop(0.00, 'rgba(20, 38, 30, 0.55)');
+    scopeBg.addColorStop(0.70, 'rgba(12, 24, 22, 0.45)');
+    scopeBg.addColorStop(1.00, 'rgba(8, 18, 18, 0.10)');
+    ctx.fillStyle = scopeBg;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Outer bezel — slightly brighter than the inner grid.
+    ctx.strokeStyle = 'rgba(160, 224, 170, 0.38)';
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
     ctx.arc(cx, cy, R, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.strokeStyle = 'rgba(150, 220, 160, 0.16)';
+    // Inner range steps.
+    ctx.strokeStyle = 'rgba(160, 224, 170, 0.16)';
+    ctx.lineWidth = 1.0;
     ctx.beginPath();
     ctx.arc(cx, cy, R * 0.66, 0, Math.PI * 2);
     ctx.moveTo(cx + R * 0.33, cy);
     ctx.arc(cx, cy, R * 0.33, 0, Math.PI * 2);
     ctx.stroke();
-    // crosshair
+    // Crosshair lines (subtle).
     ctx.beginPath();
     ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy);
     ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
     ctx.stroke();
 
-    // sweep — 720°/s = 4°/frame at 60Hz; phase taken from clock so the
-    // sweep is deterministic when frozen.
+    // Sweep — conic gradient afterglow trailing the leading edge.
     const sweepAngle = (clock.now * Math.PI * 0.9) % (Math.PI * 2);
     const sweepArc = ctx.createConicGradient(sweepAngle - Math.PI / 2, cx, cy);
-    sweepArc.addColorStop(0.00, 'rgba(150, 220, 160, 0.55)');
-    sweepArc.addColorStop(0.08, 'rgba(150, 220, 160, 0.18)');
-    sweepArc.addColorStop(0.20, 'rgba(150, 220, 160, 0.00)');
-    sweepArc.addColorStop(1.00, 'rgba(150, 220, 160, 0.00)');
+    sweepArc.addColorStop(0.00, 'rgba(160, 224, 170, 0.62)');
+    sweepArc.addColorStop(0.06, 'rgba(160, 224, 170, 0.24)');
+    sweepArc.addColorStop(0.20, 'rgba(160, 224, 170, 0.00)');
+    sweepArc.addColorStop(1.00, 'rgba(160, 224, 170, 0.00)');
     ctx.fillStyle = sweepArc;
     ctx.beginPath();
     ctx.arc(cx, cy, R, 0, Math.PI * 2);
     ctx.fill();
-    // crisp leading edge
-    ctx.strokeStyle = 'rgba(150, 220, 160, 0.85)';
-    ctx.lineWidth = 1.2;
+    // Crisp leading edge of the sweep.
+    ctx.strokeStyle = 'rgba(180, 240, 190, 0.92)';
+    ctx.lineWidth = 1.3;
     ctx.beginPath();
     ctx.moveTo(cx, cy);
     ctx.lineTo(cx + Math.cos(sweepAngle - Math.PI / 2) * R, cy + Math.sin(sweepAngle - Math.PI / 2) * R);
