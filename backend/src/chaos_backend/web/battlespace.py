@@ -678,20 +678,27 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         }
 
         /* ─── Watermark ─── */
+        /* Compact build/cam badge — top-left, just below the
+           classification banner and above the radar inset. Inline so
+           it doesn't conflict with the city / defenders. */
         .wm {
-            bottom: 44px; right: 320px;
-            color: rgba(208, 174, 99, 0.34);
+            top: 64px; left: 24px;
+            display: flex; align-items: baseline; gap: 10px;
+            color: rgba(208, 174, 99, 0.42);
             font-size: 9px;
-            letter-spacing: 4.5px;
+            letter-spacing: 3.5px;
             font-weight: 700;
-            text-align: right;
             font-variant-numeric: tabular-nums;
+            white-space: nowrap;
         }
         .wm__big {
-            color: rgba(208, 174, 99, 0.48);
-            font-size: 11px;
-            letter-spacing: 6px;
-            margin-bottom: 2px;
+            color: rgba(208, 174, 99, 0.58);
+            font-size: 10px;
+            letter-spacing: 4.5px;
+        }
+        .wm__sep {
+            width: 1px; height: 10px;
+            background: var(--rule-soft);
         }
 
         /* ─── Cinematic vignette ─── */
@@ -804,9 +811,11 @@ _BATTLESPACE_HTML = r"""<!doctype html>
     </div>
 
     <div class="overlay wm">
-        <div class="wm__big">CHAOS ONE</div>
-        <div>BATTLESPACE · v__VERSION__</div>
-        <div id="camBadge" style="margin-top:4px;color:rgba(160,224,170,0.55);"></div>
+        <span class="wm__big">CHAOS ONE</span>
+        <span class="wm__sep"></span>
+        <span>BATTLESPACE · v__VERSION__</span>
+        <span class="wm__sep"></span>
+        <span id="camBadge" style="color:rgba(160,224,170,0.65);"></span>
     </div>
 
     <div class="overlay vignette" aria-hidden="true"></div>
