@@ -3126,13 +3126,12 @@ function drawSalvos() {
             ? Math.max(0, 1 - (clock.now - s.orphanedAt) / ORPHAN_COAST_SEC)
             : 1;
         if (s.trail && s.trail.length >= 2 && trailFade > 0) {
-            // Polyline whose alpha + width grow toward the head. While
-            // orphaned, multiply alpha by `trailFade` so the older
-            // (defender-end) tail dissipates first.
+            // Polyline of the last ~0.8 s of sampled positions, ending
+            // at the current head. Do NOT prepend the defender's launch
+            // pad — once trail samples age out, that anchor leaves a
+            // multi-km straight line streaking across the picture
+            // from the launcher to the first remaining sample.
             const pts = s.trail.slice();
-            if (defScreen && def && s.state !== 'orphaned') {
-                pts.unshift([def.pos[0], 380, def.pos[2]]);
-            }
             pts.push(s.position);
             const n = pts.length;
             for (let i = 1; i < n; i++) {
