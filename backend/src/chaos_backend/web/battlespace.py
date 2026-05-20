@@ -1432,56 +1432,72 @@ function makeStars(rng, count, width, height) {
     return out;
 }
 
-// Procedural mountain ridge along the horizon — value-noise-ish height
-// per x-pixel. Layered: a far range (dim, distant) + a near range
-// (slightly darker silhouette). Width-scaled so the silhouette tracks
-// resize correctly.
-function makeMountains(rng, width) {
-    function ridge(rng, octaves, amplitude, freq) {
-        const samples = Math.ceil(width / 6) + 1;
-        const pts = [];
-        // Pre-compute octave seeds so each octave is independently
-        // sampled but deterministic.
-        const octaveSeeds = [];
-        for (let o = 0; o < octaves; o++) octaveSeeds.push(rng());
-        for (let i = 0; i < samples; i++) {
-            const x = (i / (samples - 1)) * width;
-            let h = 0;
-            let amp = amplitude;
-            let f = freq;
-            for (let o = 0; o < octaves; o++) {
-                // Mix two cosines per octave with different periods so the
-                // ridge looks broken rather than smoothly sinusoidal.
-                const phase = octaveSeeds[o] * 100;
-                h += amp * (Math.cos(x * f + phase) * 0.55 + Math.cos(x * f * 1.7 + phase * 1.3) * 0.45);
-                amp *= 0.55;
-                f *= 2.1;
-            }
-            pts.push({ x, h });
-        }
-        return pts;
-    }
-    return {
-        far: ridge(mulberry32(0xF1A07), 4, 36, 0.012),
-        near: ridge(mulberry32(0xF1A08), 5, 70, 0.008),
-    };
-}
-
-// City lights along the horizon — pre-generated random positions with
-// warm color and varied brightness so they look like distant urban
-// glow rather than a uniform line.
-function makeCityLights(rng, width) {
-    const out = [];
-    const count = Math.floor(width / 18);
-    for (let i = 0; i < count; i++) {
-        out.push({
-            x: rng() * width,
-            r: 0.6 + rng() * 1.4,
-            a: 0.32 + rng() * 0.48,
-            warm: rng() < 0.7,
+// World-space mountain ring — actual 3D peaks placed in a band around
+// the defended cell at 22-35 km radius. Each peak is a tetrahedron
+// projected through the camera pipeline, so the silhouette PARALLAXES
+// as the operator orbits or zooms (no 2D billboard cheat).
+function makeMountainRing(seed) {
+    const rng = mulberry32(seed);
+    const peaks = [];
+    // ~64 peaks spread around the perimeter with angular scatter so
+    // they don't form an obvious regular spacing. Two ranges: near
+    // (closer, sharper) and far (more distant, fainter).
+    const COUNT = 72;
+    for (let i = 0; i < COUNT; i++) {
+        // Most peaks in the near range; a third get the far-range
+        // (smaller, dimmer) treatment.
+        const far = rng() < 0.32;
+        const theta = (i / COUNT) * Math.PI * 2 + (rng() - 0.5) * (Math.PI / COUNT) * 1.8;
+        const distance = far
+            ? 30_000 + rng() * 12_000
+            : 18_000 + rng() *  8_000;
+        const height = far
+            ? 700 + rng() * 1200
+            : 900 + rng() * 2400;
+        const baseR = far
+            ? 1000 + rng() * 1400
+            : 1400 + rng() * 1900;
+        const cx = Math.sin(theta) * distance;
+        const cz = Math.cos(theta) * distance;
+        // Base orientation — apex slightly tilted toward the defended
+        // centre so the lit face is always somewhat visible.
+        const facing = Math.atan2(-cx, -cz);
+        // Cool slate tone with subtle hue variance so peaks read as
+        // a range, not a uniform fence.
+        const tint = far ? 0.62 + rng() * 0.18 : 0.78 + rng() * 0.18;
+        peaks.push({
+            cx, cz, facing, height, baseR, far,
+            tint,
+            // Slight base offset so the apex isn't always centred —
+            // gives an asymmetric silhouette.
+            apexShift: (rng() - 0.5) * baseR * 0.35,
         });
     }
-    return out;
+    return peaks;
+}
+
+// World-space city lights — warm pinpricks scattered on the ground
+// between the defender ring (3 km) and the inner mountains (~16 km).
+// They project through the same camera so they parallax / occlude
+// correctly behind threats and salvos.
+function makeCityLightField(seed) {
+    const rng = mulberry32(seed);
+    const lights = [];
+    const COUNT = 240;
+    for (let i = 0; i < COUNT; i++) {
+        const theta = rng() * Math.PI * 2;
+        // Annulus radius — denser near the outer band (suburbs around
+        // the inner range), sparser near the defender ring.
+        const r = Math.sqrt(0.32 + 0.68 * rng()) * 14_000 + 3_400;
+        lights.push({
+            pos: [Math.sin(theta) * r, 6, Math.cos(theta) * r],
+            warm: rng() < 0.72,
+            brightness: 0.30 + rng() * 0.55,
+            twinkleRate: 0.6 + rng() * 1.8,
+            twinklePhase: rng() * Math.PI * 2,
+        });
+    }
+    return lights;
 }
 
 // Nebula blobs — soft radial gradients drifting in the upper sky.
@@ -1501,8 +1517,8 @@ const ctx = canvas.getContext('2d');
 const cam = new Camera();
 let proj = new Projector(cam, window.innerWidth, window.innerHeight);
 let stars = [];
-let mountains = null;
-let cityLights = [];
+let mountainRing = makeMountainRing(0xC1A07);     // world-space tetrahedra
+let cityLightField = makeCityLightField(0xC1A09); // world-space ground pricks
 let nebulae = [];
 
 function resizeCanvas() {
@@ -1514,9 +1530,9 @@ function resizeCanvas() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     proj.resize(window.innerWidth, window.innerHeight);
     stars     = makeStars(mulberry32(0xC1A05), 220, window.innerWidth, window.innerHeight);
-    mountains = makeMountains(mulberry32(0xC1A07), window.innerWidth);
-    cityLights = makeCityLights(mulberry32(0xC1A09), window.innerWidth);
     nebulae   = makeNebulae(mulberry32(0xC1A0B), window.innerWidth, window.innerHeight);
+    // mountainRing and cityLightField are world-space — built once at
+    // module load and reused across resizes (no screen-space dependency).
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -1642,67 +1658,125 @@ function drawSky() {
     ctx.fillRect(0, horizonY - 70, W, 90);
 }
 
-function drawHorizonTerrain() {
-    const W = proj.w;
-    const horizonY = horizonScreenY();
-    if (!mountains) return;
+// World-space mountain ring drawn as 3D tetrahedra (apex + 3 base
+// corners). Each peak's faces are Lambertian-shaded against the sun
+// direction; the painter's algorithm renders back-to-front by
+// distance from the camera, so closer peaks correctly occlude the
+// farther range.
+function drawMountainRing() {
+    if (!mountainRing || mountainRing.length === 0) return;
+    const eye = cam.eye();
 
-    // Far range — paler, set ~14 px ABOVE the horizon line for parallax.
-    const farY = horizonY - 4;
-    ctx.fillStyle = 'rgba(12, 28, 52, 0.85)';
-    ctx.beginPath();
-    ctx.moveTo(0, horizonY + 2);
-    for (const p of mountains.far) {
-        ctx.lineTo(p.x, farY - p.h * 0.55);
-    }
-    ctx.lineTo(W, horizonY + 2);
-    ctx.closePath();
-    ctx.fill();
+    // Build a list of all face polygons across all peaks, then sort.
+    const polys = [];
+    for (const peak of mountainRing) {
+        const apex = [peak.cx + peak.apexShift, peak.height, peak.cz];
+        // Three base corners — front (toward origin), back-left, back-right.
+        const c1 = [
+            peak.cx + Math.sin(peak.facing) * peak.baseR,
+            0,
+            peak.cz + Math.cos(peak.facing) * peak.baseR,
+        ];
+        const c2 = [
+            peak.cx + Math.sin(peak.facing + 2.094) * peak.baseR,
+            0,
+            peak.cz + Math.cos(peak.facing + 2.094) * peak.baseR,
+        ];
+        const c3 = [
+            peak.cx + Math.sin(peak.facing + 4.189) * peak.baseR,
+            0,
+            peak.cz + Math.cos(peak.facing + 4.189) * peak.baseR,
+        ];
+        const verts = [apex, c1, c2, c3];
+        const prj = verts.map(v => proj.project(v));
+        if (prj.some(p => !p)) continue;
 
-    // Near range — darker silhouette sitting on the horizon.
-    const nearBase = horizonY + 6;
-    const nearShape = [];
-    ctx.beginPath();
-    ctx.moveTo(0, nearBase);
-    for (const p of mountains.near) {
-        const y = nearBase - p.h - 16;
-        ctx.lineTo(p.x, y);
-        nearShape.push({ x: p.x, y });
-    }
-    ctx.lineTo(W, nearBase);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(4, 12, 24, 0.96)';
-    ctx.fill();
-
-    // City lights — scatter warm pinpricks along the ridge top, the
-    // bright ones suggest larger settlements.
-    for (const l of cityLights) {
-        // Find the y of the ridge at this x.
-        let ridgeY = nearBase - 16;
-        for (let i = 1; i < nearShape.length; i++) {
-            if (nearShape[i].x >= l.x) {
-                const a = nearShape[i - 1], b = nearShape[i];
-                const t = (l.x - a.x) / (b.x - a.x);
-                ridgeY = a.y * (1 - t) + b.y * t;
-                break;
-            }
+        // 3 side faces (the bottom face faces straight down and is
+        // never visible from this orbit camera).
+        const faces = [[0, 1, 2], [0, 2, 3], [0, 3, 1]];
+        for (const f of faces) {
+            const a = verts[f[0]], b = verts[f[1]], c = verts[f[2]];
+            const e1 = V3.sub(b, a);
+            const e2 = V3.sub(c, a);
+            const n = V3.norm(V3.cross(e1, e2));
+            // Back-face cull.
+            const centroid = V3.scale(V3.add(V3.add(a, b), c), 1 / 3);
+            const toFace = V3.norm(V3.sub(centroid, eye));
+            if (V3.dot(n, toFace) > 0.05) continue;
+            const lambert = Math.max(0.10, V3.dot(n, SUN_DIR));
+            const depth = V3.len(V3.sub(centroid, eye));
+            polys.push({ p0: prj[f[0]], p1: prj[f[1]], p2: prj[f[2]],
+                         lambert, depth, peak, n });
         }
-        const y = ridgeY + 1 + l.r * 0.5;
-        const tint = l.warm
-            ? `rgba(255, 200, 130, ${l.a})`
-            : `rgba(180, 220, 255, ${l.a * 0.8})`;
-        ctx.fillStyle = tint;
+    }
+    // Painter's algorithm — back to front.
+    polys.sort((a, b) => b.depth - a.depth);
+
+    for (const poly of polys) {
+        const { p0, p1, p2, lambert, depth, peak } = poly;
+        // Distance fade: peaks beyond ~28 km wash into the atmosphere.
+        const distFade = 1 - Math.min(1, Math.max(0, (depth - 18_000) / 22_000));
+        // Cool slate base color, brightened by lambert + tint, atmospherically
+        // hazed away to a cool blue with distance.
+        const baseR = 10 + peak.tint * 28 * lambert;
+        const baseG = 16 + peak.tint * 34 * lambert;
+        const baseB = 28 + peak.tint * 56 * lambert;
+        // Mix with atmospheric haze color (toward sky tint) as distFade falls.
+        const hazeR = 16, hazeG = 36, hazeB = 70;
+        const r = baseR * distFade + hazeR * (1 - distFade);
+        const g = baseG * distFade + hazeG * (1 - distFade);
+        const bRGB = baseB * distFade + hazeB * (1 - distFade);
+        ctx.fillStyle = `rgb(${r|0},${g|0},${bRGB|0})`;
         ctx.beginPath();
-        ctx.arc(l.x, y, l.r, 0, Math.PI * 2);
+        ctx.moveTo(p0.sx, p0.sy);
+        ctx.lineTo(p1.sx, p1.sy);
+        ctx.lineTo(p2.sx, p2.sy);
+        ctx.closePath();
+        ctx.fill();
+        // Sun-lit edge highlight — only the brightest faces get it.
+        if (lambert > 0.55 && distFade > 0.55) {
+            ctx.strokeStyle = `rgba(${(r+30)|0},${(g+30)|0},${(bRGB+40)|0},0.55)`;
+            ctx.lineWidth = 0.6;
+            ctx.stroke();
+        }
+    }
+}
+
+// World-space city lights as small projected pinpricks. Drawn on top
+// of the mountain ring but below the ground grid so they read as
+// distant settlements scattered on the plain.
+function drawCityLightField() {
+    if (!cityLightField || cityLightField.length === 0) return;
+    const t = clock.now;
+    for (const L of cityLightField) {
+        const p = proj.project(L.pos);
+        if (!p) continue;
+        // Twinkle: alpha modulated per-light.
+        const twinkle = 0.65 + 0.35 * Math.sin(t * L.twinkleRate + L.twinklePhase);
+        // Distance fade — points beyond 35 km wash out.
+        const distFade = 1 - Math.min(1, Math.max(0, (p.depth - 12_000) / 24_000));
+        if (distFade < 0.03) continue;
+        const alpha = L.brightness * twinkle * distFade;
+        // Size scales mildly with distance for a sense of depth.
+        const r = 0.6 + (1 - Math.min(1, p.depth / 30_000)) * 0.8;
+        ctx.fillStyle = L.warm
+            ? `rgba(255, 198, 128, ${alpha})`
+            : `rgba(184, 220, 255, ${alpha * 0.75})`;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
         ctx.fill();
     }
+}
 
-    // Horizon hairline gradient — subtle gold seam.
-    ctx.strokeStyle = 'rgba(201, 169, 97, 0.34)';
+// Horizon hairline — preserved from the old terrain pass so the sky
+// still meets the ground with a visible gold seam.
+function drawHorizonLine() {
+    const horizonY = horizonScreenY();
+    ctx.strokeStyle = 'rgba(201, 169, 97, 0.22)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, snap(horizonY));
-    ctx.lineTo(W, snap(horizonY));
+    ctx.lineTo(proj.w, snap(horizonY));
     ctx.stroke();
 }
 
@@ -3619,7 +3693,9 @@ function frame(ts) {
     // Draw — back to front
     drawSky();
     drawStars();
-    drawHorizonTerrain();
+    drawMountainRing();      // 3D peaks in world space (behind everything else)
+    drawHorizonLine();        // thin gold seam under the sky
+    drawCityLightField();     // world-space ground pinpricks
     drawRadialSpokes();
     drawRangeRings();
     drawSensorCoverage();
