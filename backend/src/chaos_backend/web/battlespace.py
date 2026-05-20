@@ -631,7 +631,7 @@ _BATTLESPACE_HTML = r"""<!doctype html>
         <span class="mode-hud__cell">COMMS 98%</span>
         <span class="mode-hud__sep"></span>
         <span class="mode-hud__cell">PQC-HYBRID</span>
-        <span class="mode-hud__mag" id="modeMag">MAG 22 NGI / 48 SM-3 / 320 PAC-3 / HEL 1.2MJ</span>
+        <span class="mode-hud__mag" id="modeMag">MAG 24 NGI / 32 SM-3 / 48 PAC-3 / 60 IRON-D</span>
     </div>
 
     <div class="overlay classbar">UNCLASSIFIED // DEMO // FOR EVALUATION</div>
@@ -681,9 +681,9 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             <div class="bay__row"><span class="bay__id">PAC-3</span><span class="bay__count">320</span></div>
             <div class="bay__bar"><div class="bay__bar-fill" style="width:100%"></div></div>
         </div>
-        <div class="bay__slot" data-eff="HEL">
-            <div class="bay__row"><span class="bay__id">HEL</span><span class="bay__count">1.2 MJ</span></div>
-            <div class="bay__bar"><div class="bay__bar-fill" style="width:80%"></div></div>
+        <div class="bay__slot" data-eff="IRON-D">
+            <div class="bay__row"><span class="bay__id">IRON-D</span><span class="bay__count">60</span></div>
+            <div class="bay__bar"><div class="bay__bar-fill" style="width:100%"></div></div>
         </div>
     </div>
 
@@ -964,8 +964,8 @@ function hexPosition(thetaDeg, radius) {
 //   Class-appropriate speeds let each effector earn its slot:
 //   NGI is a Mach-13 exoatmospheric kill vehicle; PAC-3 is a Mach-5
 //   terminal-tier hit-to-kill round; SM-3 sits in between with
-//   upper-tier reach. HEL is a directed beam (line-of-sight, dwell-
-//   to-kill) for low-end leakers and saturation defense.
+//   upper-tier reach. IRON-D is a Tamir-class short-range kinetic
+//   interceptor for cruise / drone / late-MARV leakers.
 // ═════════════════════════════════════════════════════════════════════
 const DEFENDER_RADIUS_M = 3_000;
 const DEFENDER_BATTERIES = [
@@ -1000,15 +1000,18 @@ const DEFENDER_BATTERIES = [
         pk:       { HGV: 0.40, BM: 0.55, MARV: 0.85, CRUISE: 0.90, DRONE: 0.92, HYP: 0.06 },
     },
     {
-        id: 'HEL',  pos: hexPosition(270, DEFENDER_RADIUS_M),
-        color: [1.00, 0.88, 0.55], class: 'DIRECTED',
-        envelope: { rangeMin:   100, rangeMax:  9_000, hMin:   0,  hMax: 12_000 },
-        profile:  { cruise_mps: 0,   boost_mps: 0, accel_mps2: 0,
-                    boost_s: 0, turn_rad_s: 0, detonation_m: 0,
-                    dwell_s: 0.45 /* dwell-to-kill, line-of-sight */ },
-        logistics:{ magazine: 999, magazineMax: 999, reload_s: 0.15, maxSimul: 2,
-                    resupply_s: 0 /* directed energy doesn't run out */ },
-        pk:       { HGV: 0.30, BM: 0.35, MARV: 0.55, CRUISE: 0.92, DRONE: 0.98, HYP: 0.10 },
+        // IRON-D — short-range kinetic terminal interceptor in the
+        // Tamir family. Replaces the previous directed-energy block.
+        // Best against cruise / drone / late-MARV; not effective vs
+        // hypersonic or exoatmospheric tracks.
+        id: 'IRON-D', pos: hexPosition(270, DEFENDER_RADIUS_M),
+        color: [1.00, 0.88, 0.55], class: 'KINETIC',
+        envelope: { rangeMin:   150, rangeMax:  9_000, hMin:   20, hMax: 18_000 },
+        profile:  { cruise_mps: 1_500, boost_mps: 320, accel_mps2: 4_000,
+                    boost_s: 0.38, turn_rad_s: 4.8, detonation_m: 140 },
+        logistics:{ magazine: 60, magazineMax: 60, reload_s: 0.35, maxSimul: 8,
+                    resupply_s: 2.5 },
+        pk:       { HGV: 0.30, BM: 0.35, MARV: 0.78, CRUISE: 0.93, DRONE: 0.95, HYP: 0.08 },
     },
 ];
 
@@ -1285,7 +1288,7 @@ const COA_ALLOCATIONS = {
     'COA-B': [
         { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 850 },
         { defender: 'NGI', target: 'HGV-WRAITH-02', kind: 'KINETIC',  speed: 850 },
-        { defender: 'HEL', target: 'MARV-VIPER-03', kind: 'DIRECTED', speed: 2.998e8 },
+        { defender: 'IRON-D', target: 'MARV-VIPER-03', kind: 'KINETIC', speed: 850 },
     ],
     'COA-C': [
         { defender: 'NGI', target: 'HGV-WRAITH-01', kind: 'KINETIC',  speed: 850 },
@@ -3389,11 +3392,18 @@ function drawScanlines() {
 // ═════════════════════════════════════════════════════════════════════
 function positionCallouts() {
     const container = document.getElementById('callouts');
+    // Track which callout ids are alive this frame so we can GC
+    // orphans whose threats were dropped by tickThreatLifecycle —
+    // otherwise a leaker / killed track leaves a callout box parked
+    // over the city forever.
+    const alive = new Set();
     for (const tr of TRACKS) {
-        let node = document.getElementById('co-' + tr.id);
+        const nodeId = 'co-' + tr.id;
+        alive.add(nodeId);
+        let node = document.getElementById(nodeId);
         if (!node) {
             node = document.createElement('div');
-            node.id = 'co-' + tr.id;
+            node.id = nodeId;
             node.className = 'callout';
             node.innerHTML = `<span class="callout__id"></span><span class="callout__data"></span>`;
             container.appendChild(node);
@@ -3413,6 +3423,13 @@ function positionCallouts() {
         node.querySelector('.callout__data').textContent =
             `${tr.kind} · CONFIDENT · M${speed.toFixed(1)} · ALT ${altKm} km · RNG ${rngKm} km`;
     }
+    // Drop orphan callout nodes — happens for threats GC'd from the
+    // THREATS list (leaked into the city, splashed and aged out, or
+    // dropped between cycles).
+    for (let i = container.children.length - 1; i >= 0; i--) {
+        const n = container.children[i];
+        if (n.id && !alive.has(n.id)) container.removeChild(n);
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -3430,7 +3447,7 @@ const COAS = {
     'COA-B': {
         id: 'COA-B',
         head: 'Mixed engagement',
-        why: '2× NGI on highest-confidence HGV. HEL warmed for swarm screen. Cyber deny adversary GNSS guidance under ROE-2.',
+        why: '2× NGI on highest-confidence HGV. IRON-D screens drones and cruise. Cyber denies adversary GNSS guidance under ROE-2.',
         metrics: ['LEAKAGE 5%', 'COST 2 NGI + 1.2MJ', 'ESC LOW', 'REL NATO'],
         countdownSec: 8,
         rec: true,
@@ -3586,7 +3603,7 @@ function authorizeCOA(coaId, source) {
     const directed = allocs.filter(a => a.kind === 'DIRECTED').length;
     const summary = [
         kinetic ? `${kinetic}× NGI` : null,
-        directed ? `${directed}× HEL` : null,
+        directed ? `${directed}× IRON-D` : null,
     ].filter(Boolean).join(' + ');
     const tag = engagement.authorizedBy === 'AUTO' ? 'AUTO-AUTH' : 'COA authorized';
     const trail = engagement.authorizedBy === 'AUTO' ? ' · ROE-2 weapons-free' : '';
@@ -3814,7 +3831,7 @@ const BAY_BASE = {
     'NGI':   { fmt: (v) => String(v) },
     'SM-3':  { fmt: (v) => String(v) },
     'PAC-3': { fmt: (v) => String(v) },
-    'HEL':   { fmt: (v) => v >= 100 ? '∞' : v.toFixed(0) + ' MJ' },
+    'IRON-D': { fmt: (v) => String(v | 0) },
 };
 let lastBayState = '';
 function renderBay() {
@@ -3831,7 +3848,7 @@ function renderBay() {
         if (!slot) continue;
         const st = defenderState.get(def.id);
         const fmt = BAY_BASE[def.id]?.fmt || ((v) => String(v));
-        const value = (def.id === 'HEL') ? (st.magazine / 1) : st.magazine;
+        const value = st.magazine;
         slot.querySelector('.bay__count').textContent = fmt(value);
         const ratio = def.logistics.magazineMax > 0
             ? Math.max(0, st.magazine / def.logistics.magazineMax)
