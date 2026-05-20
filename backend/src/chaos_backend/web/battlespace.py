@@ -489,15 +489,24 @@ _BATTLESPACE_HTML = r"""<!doctype html>
             font-size: 10px;
             letter-spacing: 1px;
             color: var(--bone);
-            transform: translate(8px, -50%);
+            transform-origin: left center;
             background: rgba(10, 22, 40, 0.78);
             border: 1px solid rgba(201, 169, 97, 0.45);
             border-left-width: 2px;
             padding: 4px 8px 4px 8px;
             font-variant-numeric: tabular-nums;
-            transition: left var(--t-fast), top var(--t-fast);
-            will-change: left, top;
+            transition: left var(--t-fast), top var(--t-fast), opacity var(--t-fast);
+            will-change: left, top, transform;
         }
+        .callout--far {
+            /* When the threat is far, drop the full readout and show
+               just the id chip so the picture doesn't get clobbered
+               by stacked labels. */
+            font-size: 8.5px;
+            padding: 2px 5px;
+            opacity: 0.78;
+        }
+        .callout--far .callout__data { display: none; }
         .callout__id {
             color: var(--gold);
             font-weight: 800;
@@ -1537,9 +1546,18 @@ function tickThreatLifecycle() {
                 engagement.killedTracks.delete(t.id);
             }
         } else if (phase > 1.4) {
-            // Threat reached terminal and was never killed — log a leak.
+            // Threat reached terminal and was never killed — log a
+            // leak AND book a ground-impact splash at its terminal
+            // point so the operator sees the breach (drawn in
+            // crimson, larger than an intercept splash).
             pushLogOnce(`leaker-${t.id}`, `LEAKER <em>${t.id}</em> impacted defended cell`);
             engagement.leakers = (engagement.leakers || 0) + 1;
+            engagement.splashes.push({
+                point: [t.terminal[0], 10, t.terminal[2]],
+                born: clock.now,
+                until: clock.now + 1.6,
+                kind: 'leak',
+            });
             THREATS.splice(i, 1);
             trailsByTrack.delete(t.id);
         }
@@ -3106,27 +3124,64 @@ function drawSplashes() {
         if (!p) continue;
         const age = (clock.now - sp.born) / (sp.until - sp.born);
         if (age < 0 || age > 1) continue;
-        const r1 = 8 + age * 60;
+        const isLeak = sp.kind === 'leak';
+        // Leak splashes are bigger, crimson, longer-lived; intercept
+        // splashes are smaller and amber.
+        const r1 = (isLeak ? 14 : 8) + age * (isLeak ? 90 : 60);
         const r2 = r1 * 0.45;
-        // Outer expanding ring (white-hot → amber → gone)
-        ctx.strokeStyle = `rgba(255, 220, 140, ${(1 - age) * 0.95})`;
-        ctx.lineWidth = 2.2 - age * 1.6;
-        ctx.beginPath();
-        ctx.arc(p.sx, p.sy, r1, 0, Math.PI * 2);
-        ctx.stroke();
-        // Inner hot core (yellow → red)
-        const hot = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, r2);
-        hot.addColorStop(0.00, `rgba(255, 255, 220, ${(1 - age) * 0.95})`);
-        hot.addColorStop(0.50, `rgba(255, 180,  60, ${(1 - age) * 0.55})`);
-        hot.addColorStop(1.00, `rgba(220,  80,  40, 0)`);
-        ctx.fillStyle = hot;
-        ctx.beginPath();
-        ctx.arc(p.sx, p.sy, r2, 0, Math.PI * 2);
-        ctx.fill();
-        // Shrapnel ticks
-        ctx.strokeStyle = `rgba(255, 200, 100, ${(1 - age) * 0.65})`;
+
+        if (isLeak) {
+            // Ground impact — crimson outer ring + red core.
+            ctx.strokeStyle = `rgba(255, 90, 60, ${(1 - age) * 0.95})`;
+            ctx.lineWidth = 2.8 - age * 1.8;
+            ctx.beginPath();
+            ctx.arc(p.sx, p.sy, r1, 0, Math.PI * 2);
+            ctx.stroke();
+            // Secondary smoke ring lagging the shockwave.
+            ctx.strokeStyle = `rgba(60, 40, 50, ${(1 - age) * 0.55})`;
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.arc(p.sx, p.sy, r1 * 0.7, 0, Math.PI * 2);
+            ctx.stroke();
+            const hot = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, r2);
+            hot.addColorStop(0.00, `rgba(255, 230, 180, ${(1 - age) * 0.95})`);
+            hot.addColorStop(0.40, `rgba(255, 140,  60, ${(1 - age) * 0.75})`);
+            hot.addColorStop(1.00, `rgba(220,  40,  30, 0)`);
+            ctx.fillStyle = hot;
+            ctx.beginPath();
+            ctx.arc(p.sx, p.sy, r2, 0, Math.PI * 2);
+            ctx.fill();
+            // Strike marker — small "X" persists briefly.
+            ctx.strokeStyle = `rgba(255, 80, 60, ${(1 - age) * 0.9})`;
+            ctx.lineWidth = 1.4;
+            const xs = 5;
+            ctx.beginPath();
+            ctx.moveTo(p.sx - xs, p.sy - xs); ctx.lineTo(p.sx + xs, p.sy + xs);
+            ctx.moveTo(p.sx - xs, p.sy + xs); ctx.lineTo(p.sx + xs, p.sy - xs);
+            ctx.stroke();
+        } else {
+            // Intercept — amber/yellow.
+            ctx.strokeStyle = `rgba(255, 220, 140, ${(1 - age) * 0.95})`;
+            ctx.lineWidth = 2.2 - age * 1.6;
+            ctx.beginPath();
+            ctx.arc(p.sx, p.sy, r1, 0, Math.PI * 2);
+            ctx.stroke();
+            const hot = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, r2);
+            hot.addColorStop(0.00, `rgba(255, 255, 220, ${(1 - age) * 0.95})`);
+            hot.addColorStop(0.50, `rgba(255, 180,  60, ${(1 - age) * 0.55})`);
+            hot.addColorStop(1.00, `rgba(220,  80,  40, 0)`);
+            ctx.fillStyle = hot;
+            ctx.beginPath();
+            ctx.arc(p.sx, p.sy, r2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Shrapnel ticks — slightly different palette per kind.
+        ctx.strokeStyle = isLeak
+            ? `rgba(255, 100, 70, ${(1 - age) * 0.75})`
+            : `rgba(255, 200, 100, ${(1 - age) * 0.65})`;
         ctx.lineWidth = 0.9;
-        const spokes = 8;
+        const spokes = isLeak ? 12 : 8;
         for (let i = 0; i < spokes; i++) {
             const a = (i / spokes) * Math.PI * 2 + age * 0.5;
             const x1 = p.sx + Math.cos(a) * r1 * 0.5;
@@ -3416,9 +3471,33 @@ function positionCallouts() {
         const speed = trackSpeedMach(tr);
         const altKm = (p[1] / 1000).toFixed(1);
         const rngKm = (Math.hypot(p[0], p[2]) / 1000).toFixed(1);
+        // Proximity scale: callouts shrink the farther the threat is
+        // from the camera, drop to id-chip only at mid range, and hide
+        // outright when the camera is panned far enough that they'd
+        // crowd the screen.
+        //   near  (depth < 7 km)        full size, full readout
+        //   mid   (7-18 km)             scaled down, full readout
+        //   far   (18-32 km)            tiny chip, id only
+        //   beyond (> 32 km)            hidden
+        const dep = sp.depth;
+        if (dep > 32_000) { node.style.display = 'none'; continue; }
+        let scale, isFar;
+        if (dep < 7_000) {
+            scale = 1.0; isFar = false;
+        } else if (dep < 18_000) {
+            // Smoothly interpolate from 1.0 at 7 km to 0.62 at 18 km.
+            scale = 1.0 - (dep - 7_000) / 11_000 * 0.38;
+            isFar = false;
+        } else {
+            // Far: tiny chip, gentle continued shrink from 0.55 to 0.40.
+            scale = 0.55 - (dep - 18_000) / 14_000 * 0.15;
+            isFar = true;
+        }
         node.style.display = '';
-        node.style.left = (sp.sx + 18) + 'px';
+        node.style.left = (sp.sx + Math.round(14 * scale + 4)) + 'px';
         node.style.top  = (sp.sy - 4) + 'px';
+        node.style.transform = `translateY(-50%) scale(${scale.toFixed(3)})`;
+        node.classList.toggle('callout--far', isFar);
         node.querySelector('.callout__id').textContent = `${tr.id} · P${tr.priority}`;
         node.querySelector('.callout__data').textContent =
             `${tr.kind} · CONFIDENT · M${speed.toFixed(1)} · ALT ${altKm} km · RNG ${rngKm} km`;
