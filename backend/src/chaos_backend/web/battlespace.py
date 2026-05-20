@@ -1414,16 +1414,83 @@ function mulberry32(seed) {
     };
 }
 function makeStars(rng, count, width, height) {
+    // Warm and cool stars at varied magnitudes. Twinkle phase + rate
+    // are per-star so the field shimmers without a uniform pulse.
     const out = [];
     for (let i = 0; i < count; i++) {
+        const warm = rng() < 0.18;
         out.push({
             x: rng() * width,
             y: rng() * (height * 0.62),
-            r: 0.45 + rng() * 1.1,
-            a: 0.18 + rng() * 0.48,
+            r: 0.4 + rng() * 1.2,
+            a: 0.18 + rng() * 0.55,
+            warm,
+            twinkleRate: 0.4 + rng() * 1.8,
+            twinklePhase: rng() * Math.PI * 2,
         });
     }
     return out;
+}
+
+// Procedural mountain ridge along the horizon — value-noise-ish height
+// per x-pixel. Layered: a far range (dim, distant) + a near range
+// (slightly darker silhouette). Width-scaled so the silhouette tracks
+// resize correctly.
+function makeMountains(rng, width) {
+    function ridge(rng, octaves, amplitude, freq) {
+        const samples = Math.ceil(width / 6) + 1;
+        const pts = [];
+        // Pre-compute octave seeds so each octave is independently
+        // sampled but deterministic.
+        const octaveSeeds = [];
+        for (let o = 0; o < octaves; o++) octaveSeeds.push(rng());
+        for (let i = 0; i < samples; i++) {
+            const x = (i / (samples - 1)) * width;
+            let h = 0;
+            let amp = amplitude;
+            let f = freq;
+            for (let o = 0; o < octaves; o++) {
+                // Mix two cosines per octave with different periods so the
+                // ridge looks broken rather than smoothly sinusoidal.
+                const phase = octaveSeeds[o] * 100;
+                h += amp * (Math.cos(x * f + phase) * 0.55 + Math.cos(x * f * 1.7 + phase * 1.3) * 0.45);
+                amp *= 0.55;
+                f *= 2.1;
+            }
+            pts.push({ x, h });
+        }
+        return pts;
+    }
+    return {
+        far: ridge(mulberry32(0xF1A07), 4, 36, 0.012),
+        near: ridge(mulberry32(0xF1A08), 5, 70, 0.008),
+    };
+}
+
+// City lights along the horizon — pre-generated random positions with
+// warm color and varied brightness so they look like distant urban
+// glow rather than a uniform line.
+function makeCityLights(rng, width) {
+    const out = [];
+    const count = Math.floor(width / 18);
+    for (let i = 0; i < count; i++) {
+        out.push({
+            x: rng() * width,
+            r: 0.6 + rng() * 1.4,
+            a: 0.32 + rng() * 0.48,
+            warm: rng() < 0.7,
+        });
+    }
+    return out;
+}
+
+// Nebula blobs — soft radial gradients drifting in the upper sky.
+function makeNebulae(rng, width, height) {
+    return [
+        { cx: width * 0.18, cy: height * 0.22, r: 240, hue: [120,  90, 60], a: 0.10 },
+        { cx: width * 0.74, cy: height * 0.14, r: 320, hue: [ 60, 100, 140], a: 0.08 },
+        { cx: width * 0.55, cy: height * 0.32, r: 280, hue: [180, 110,  60], a: 0.06 },
+    ];
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -1434,6 +1501,9 @@ const ctx = canvas.getContext('2d');
 const cam = new Camera();
 let proj = new Projector(cam, window.innerWidth, window.innerHeight);
 let stars = [];
+let mountains = null;
+let cityLights = [];
+let nebulae = [];
 
 function resizeCanvas() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -1443,7 +1513,10 @@ function resizeCanvas() {
     canvas.style.height = window.innerHeight + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     proj.resize(window.innerWidth, window.innerHeight);
-    stars = makeStars(mulberry32(0xC1A05), 140, window.innerWidth, window.innerHeight);
+    stars     = makeStars(mulberry32(0xC1A05), 220, window.innerWidth, window.innerHeight);
+    mountains = makeMountains(mulberry32(0xC1A07), window.innerWidth);
+    cityLights = makeCityLights(mulberry32(0xC1A09), window.innerWidth);
+    nebulae   = makeNebulae(mulberry32(0xC1A0B), window.innerWidth, window.innerHeight);
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -1528,13 +1601,18 @@ function drawSky() {
     const W = proj.w, H = proj.h;
     const horizonY = horizonScreenY();
 
+    // Upper sky: deep space → midnight blue → dusk navy as we approach
+    // the horizon. Atmospheric scattering reads near the bottom.
     const sky = ctx.createLinearGradient(0, 0, 0, horizonY);
-    sky.addColorStop(0.00, '#020714');
-    sky.addColorStop(0.45, '#06142A');
-    sky.addColorStop(1.00, '#0E2541');
+    sky.addColorStop(0.00, '#020616');
+    sky.addColorStop(0.35, '#06142A');
+    sky.addColorStop(0.78, '#0F2A48');
+    sky.addColorStop(1.00, '#173A5C');
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, W, horizonY);
 
+    // Sub-horizon ground/sea — slight tint shift so the join reads
+    // as terrain rather than reflection.
     const ground = ctx.createLinearGradient(0, horizonY, 0, H);
     ground.addColorStop(0.00, '#0A1B30');
     ground.addColorStop(0.45, '#060F1E');
@@ -1542,15 +1620,85 @@ function drawSky() {
     ctx.fillStyle = ground;
     ctx.fillRect(0, horizonY, W, H - horizonY);
 
-    // Atmospheric haze line above the horizon
-    const halo = ctx.createLinearGradient(0, horizonY - 40, 0, horizonY + 12);
-    halo.addColorStop(0.00, 'rgba(201, 169, 97, 0.00)');
-    halo.addColorStop(0.65, 'rgba(201, 169, 97, 0.045)');
-    halo.addColorStop(1.00, 'rgba(201, 169, 97, 0.13)');
-    ctx.fillStyle = halo;
-    ctx.fillRect(0, horizonY - 40, W, 52);
+    // Soft nebula glows in the upper sky — additive radial gradients.
+    for (const n of nebulae) {
+        // Pin to upper half so they never collide with the terrain.
+        if (n.cy > horizonY * 0.85) continue;
+        const grad = ctx.createRadialGradient(n.cx, n.cy, 0, n.cx, n.cy, n.r);
+        grad.addColorStop(0.00, `rgba(${n.hue[0]},${n.hue[1]},${n.hue[2]},${n.a})`);
+        grad.addColorStop(0.55, `rgba(${n.hue[0]},${n.hue[1]},${n.hue[2]},${n.a * 0.35})`);
+        grad.addColorStop(1.00, `rgba(${n.hue[0]},${n.hue[1]},${n.hue[2]},0)`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(n.cx - n.r, n.cy - n.r, n.r * 2, n.r * 2);
+    }
 
-    ctx.strokeStyle = 'rgba(201, 169, 97, 0.30)';
+    // Atmospheric scattering glow at the horizon — warmer where the
+    // sun sits down-range, cool everywhere else.
+    const halo = ctx.createLinearGradient(0, horizonY - 70, 0, horizonY + 24);
+    halo.addColorStop(0.00, 'rgba(201, 169, 97, 0.00)');
+    halo.addColorStop(0.60, 'rgba(201, 169, 97, 0.06)');
+    halo.addColorStop(1.00, 'rgba(220, 184, 110, 0.20)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, horizonY - 70, W, 90);
+}
+
+function drawHorizonTerrain() {
+    const W = proj.w;
+    const horizonY = horizonScreenY();
+    if (!mountains) return;
+
+    // Far range — paler, set ~14 px ABOVE the horizon line for parallax.
+    const farY = horizonY - 4;
+    ctx.fillStyle = 'rgba(12, 28, 52, 0.85)';
+    ctx.beginPath();
+    ctx.moveTo(0, horizonY + 2);
+    for (const p of mountains.far) {
+        ctx.lineTo(p.x, farY - p.h * 0.55);
+    }
+    ctx.lineTo(W, horizonY + 2);
+    ctx.closePath();
+    ctx.fill();
+
+    // Near range — darker silhouette sitting on the horizon.
+    const nearBase = horizonY + 6;
+    const nearShape = [];
+    ctx.beginPath();
+    ctx.moveTo(0, nearBase);
+    for (const p of mountains.near) {
+        const y = nearBase - p.h - 16;
+        ctx.lineTo(p.x, y);
+        nearShape.push({ x: p.x, y });
+    }
+    ctx.lineTo(W, nearBase);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(4, 12, 24, 0.96)';
+    ctx.fill();
+
+    // City lights — scatter warm pinpricks along the ridge top, the
+    // bright ones suggest larger settlements.
+    for (const l of cityLights) {
+        // Find the y of the ridge at this x.
+        let ridgeY = nearBase - 16;
+        for (let i = 1; i < nearShape.length; i++) {
+            if (nearShape[i].x >= l.x) {
+                const a = nearShape[i - 1], b = nearShape[i];
+                const t = (l.x - a.x) / (b.x - a.x);
+                ridgeY = a.y * (1 - t) + b.y * t;
+                break;
+            }
+        }
+        const y = ridgeY + 1 + l.r * 0.5;
+        const tint = l.warm
+            ? `rgba(255, 200, 130, ${l.a})`
+            : `rgba(180, 220, 255, ${l.a * 0.8})`;
+        ctx.fillStyle = tint;
+        ctx.beginPath();
+        ctx.arc(l.x, y, l.r, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Horizon hairline gradient — subtle gold seam.
+    ctx.strokeStyle = 'rgba(201, 169, 97, 0.34)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, snap(horizonY));
@@ -1559,11 +1707,26 @@ function drawSky() {
 }
 
 function drawStars() {
+    const t = clock.now;
     for (const s of stars) {
-        ctx.fillStyle = `rgba(232, 226, 208, ${s.a})`;
+        // Twinkle: alpha modulated by per-star phase + rate.
+        const twinkle = 0.78 + 0.22 * Math.sin(t * s.twinkleRate + s.twinklePhase);
+        const tint = s.warm
+            ? `rgba(255, 220, 180, ${s.a * twinkle})`
+            : `rgba(220, 230, 255, ${s.a * twinkle})`;
+        ctx.fillStyle = tint;
         ctx.beginPath();
         ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
         ctx.fill();
+        // Brightest stars get a tiny cross-bloom.
+        if (s.r > 1.2 && twinkle > 0.92) {
+            ctx.strokeStyle = tint;
+            ctx.lineWidth = 0.4;
+            ctx.beginPath();
+            ctx.moveTo(s.x - s.r * 3, s.y); ctx.lineTo(s.x + s.r * 3, s.y);
+            ctx.moveTo(s.x, s.y - s.r * 3); ctx.lineTo(s.x, s.y + s.r * 3);
+            ctx.stroke();
+        }
     }
 }
 
@@ -1674,43 +1837,86 @@ function drawAssets() {
     }
 }
 
+// Sun direction in world space — drives Lambertian shading on the
+// 3D defender pyramids and on any other lit surface we add later.
+const SUN_DIR = V3.norm([0.45, 0.85, 0.30]);
+
 function drawDefenderBatteries() {
     for (const b of DEFENDER_BATTERIES) {
-        const base = proj.project(b.pos);
-        const top  = proj.project([b.pos[0], 380, b.pos[2]]);
-        if (!base || !top) continue;
-        const half = Math.max(5, 90 / Math.max(0.7, base.depth / 7000));
+        // ── 3D defender pyramid ──────────────────────────────────────
+        // Four world-space vertices: apex (above the position) + 3
+        // base corners on the ground in an equilateral triangle.
+        const apexH = 540;
+        const baseR = 420;
+        // Rotate the base triangle so one vertex faces the center
+        // (origin) — that's the "down-range" side, gives every battery
+        // a consistent orientation.
+        const cx = b.pos[0], cz = b.pos[2];
+        const facing = Math.atan2(-cx, -cz);   // toward origin
+        const VERTS = [
+            [cx,                                      apexH, cz                                      ], // 0: apex
+            [cx + baseR * Math.sin(facing),               0, cz + baseR * Math.cos(facing)              ], // 1: front
+            [cx + baseR * Math.sin(facing + 2.094),       0, cz + baseR * Math.cos(facing + 2.094)      ], // 2: rear-left
+            [cx + baseR * Math.sin(facing + 4.189),       0, cz + baseR * Math.cos(facing + 4.189)      ], // 3: rear-right
+        ];
+        const PRJ = VERTS.map(v => proj.project(v));
+        if (PRJ.some(p => !p)) continue;
 
-        // Pedestal chevron
-        ctx.fillStyle = 'rgba(14, 26, 44, 0.96)';
-        ctx.strokeStyle = rgbStr(b.color, 0.95);
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.moveTo(base.sx - half, base.sy + half * 0.42);
-        ctx.lineTo(base.sx + half, base.sy + half * 0.42);
-        ctx.lineTo(top.sx,         top.sy);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
+        // 3 side faces (skip the bottom — never visible from above).
+        const FACES = [[0, 1, 2], [0, 2, 3], [0, 3, 1]];
+        const shaded = FACES.map(idx => {
+            const a = VERTS[idx[0]], B = VERTS[idx[1]], c = VERTS[idx[2]];
+            const e1 = V3.sub(B, a);
+            const e2 = V3.sub(c, a);
+            const n = V3.norm(V3.cross(e1, e2));
+            const lambert = Math.max(0.18, V3.dot(n, SUN_DIR));
+            const centroid = V3.scale(V3.add(V3.add(a, B), c), 1 / 3);
+            const depth = V3.len(V3.sub(centroid, cam.eye()));
+            // Back-face cull: face is "facing away" if the normal points
+            // in the same direction as eye→centroid.
+            const toFace = V3.norm(V3.sub(centroid, cam.eye()));
+            const facingAway = V3.dot(n, toFace) > 0.05;
+            return { idx, lambert, depth, facingAway };
+        }).filter(f => !f.facingAway)
+          .sort((a, b) => b.depth - a.depth);
 
-        // Halo
-        const glowR = half * 2.0;
-        const halo = ctx.createRadialGradient(top.sx, top.sy, 0, top.sx, top.sy, glowR);
-        halo.addColorStop(0, rgbStr(b.color, 0.60));
+        for (const { idx, lambert } of shaded) {
+            const p0 = PRJ[idx[0]], p1 = PRJ[idx[1]], p2 = PRJ[idx[2]];
+            // Build a shaded fill from the battery's accent colour
+            // blended with a dark navy underlay.
+            const r = Math.min(255, 14 + b.color[0] * 200 * lambert);
+            const g = Math.min(255, 22 + b.color[1] * 200 * lambert);
+            const bb = Math.min(255, 36 + b.color[2] * 220 * lambert);
+            ctx.fillStyle = `rgba(${r|0},${g|0},${bb|0},0.97)`;
+            ctx.beginPath();
+            ctx.moveTo(p0.sx, p0.sy);
+            ctx.lineTo(p1.sx, p1.sy);
+            ctx.lineTo(p2.sx, p2.sy);
+            ctx.closePath();
+            ctx.fill();
+            // Edge highlight — brighter on faces nearest the sun.
+            ctx.strokeStyle = rgbStr(b.color, 0.45 + 0.45 * lambert);
+            ctx.lineWidth = 1.0;
+            ctx.stroke();
+        }
+
+        // Apex emissive bead + halo.
+        const apex = PRJ[0];
+        const haloR = 22;
+        const halo = ctx.createRadialGradient(apex.sx, apex.sy, 0, apex.sx, apex.sy, haloR);
+        halo.addColorStop(0, rgbStr(b.color, 0.55));
         halo.addColorStop(1, rgbStr(b.color, 0.00));
         ctx.fillStyle = halo;
         ctx.beginPath();
-        ctx.arc(top.sx, top.sy, glowR, 0, Math.PI * 2);
+        ctx.arc(apex.sx, apex.sy, haloR, 0, Math.PI * 2);
         ctx.fill();
-
-        // Hot core
         ctx.fillStyle = rgbStr(b.color, 1.0);
         ctx.beginPath();
-        ctx.arc(top.sx, top.sy, 2.5, 0, Math.PI * 2);
+        ctx.arc(apex.sx, apex.sy, 2.6, 0, Math.PI * 2);
         ctx.fill();
 
-        // Label below pedestal
-        const labelP = proj.project([b.pos[0], -120, b.pos[2]]);
+        // Label below the base.
+        const labelP = proj.project([cx, -110, cz]);
         if (labelP) {
             ctx.fillStyle = rgbStr(b.color, 0.95);
             ctx.font = '800 9.5px ui-monospace, "SF Mono", Menlo, monospace';
@@ -3413,6 +3619,7 @@ function frame(ts) {
     // Draw — back to front
     drawSky();
     drawStars();
+    drawHorizonTerrain();
     drawRadialSpokes();
     drawRangeRings();
     drawSensorCoverage();
